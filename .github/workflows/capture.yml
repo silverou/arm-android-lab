@@ -1,0 +1,95 @@
+name: capture
+
+on:
+  workflow_dispatch:
+
+jobs:
+  capture:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: binder + redroid
+        run: |
+          sudo modprobe binder_linux devices="binder,hwbinder,vndbinder"
+          sudo mkdir -p /dev/binderfs
+          sudo mount -t binder binder /dev/binderfs
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq adb xz-utils python3-pip >/dev/null 2>&1
+          sudo docker run -d --privileged --name redroid \
+            -v /dev/binderfs:/dev/binderfs \
+            -p 5555:5555 \
+            redroid/redroid:12.0.0-latest \
+            androidboot.redroid_gpu_mode=software
+          sleep 10
+          adb connect localhost:5555 || true
+          for i in $(seq 1 30); do
+            ok=$(adb -s localhost:5555 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+            [ "$ok" = "1" ] && break
+            sleep 3
+          done
+          adb devices
+          adb -s localhost:5555 shell getprop sys.boot_completed
+
+      - name: download payload
+        run: |
+          curl -sL -o app.apk "https://github.com/silverou/arm-android-lab/releases/download/payload-v1/hepy_2.0.4.apk"
+          ls -la app.apk
+          sha256sum app.apk
+
+      - name: install app
+        run: |
+          adb -s localhost:5555 install -r -g app.apk 2>&1 | tail -2
+          adb -s localhost:5555 shell pm path com.ihuman.pinyin
+
+      - name: plain launch probe
+        run: |
+          adb -s localhost:5555 logcat -c || true
+          adb -s localhost:5555 shell am start -n com.ihuman.pinyin/org.cocos2dx.lua.AppActivity || true
+          sleep 45
+          echo "--- pid ---"
+          adb -s localhost:5555 shell "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
+          echo "--- crash markers ---"
+          adb -s localhost:5555 logcat -d -v time 2>/dev/null | grep -aE "0xdead|Fatal signal|x_initialize|MyApplication|ClassNotFound" | tail -20 || true
+          adb -s localhost:5555 logcat -d -v time > logcat_plain.txt 2>/dev/null || true
+          adb -s localhost:5555 shell am force-stop com.ihuman.pinyin || true
+
+      - name: frida setup
+        run: |
+          curl -sL -o fs.xz "https://github.com/frida/frida/releases/download/17.24.3/frida-server-17.24.3-android-arm64.xz"
+          xz -d fs.xz
+          adb -s localhost:5555 push fs /data/local/tmp/frida-server
+          adb -s localhost:5555 shell "chmod 755 /data/local/tmp/frida-server"
+          adb -s localhost:5555 root || true
+          sleep 3
+          adb -s localhost:5555 shell "nohup /data/local/tmp/frida-server -D >/dev/null 2>&1 &" || true
+          sleep 3
+          adb -s localhost:5555 shell "ps -A | grep frida" || true
+          adb -s localhost:5555 forward tcp:27042 tcp:27042
+          pip install -q frida==17.24.3
+
+      - name: frida spawn capture
+        run: |
+          adb -s localhost:5555 shell am force-stop com.ihuman.pinyin || true
+          timeout 240 python3 tools/run_capture.py 180 > hook_out.txt 2>&1 || true
+          echo "===== hook_out ====="
+          tail -60 hook_out.txt
+          adb -s localhost:5555 logcat -d -v time > logcat_frida.txt 2>/dev/null || true
+          echo "===== frida-run crash markers ====="
+          grep -aE "0xdead|Fatal signal" logcat_frida.txt | tail -10 || true
+
+      - name: upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capture-out
+          path: |
+            logcat_plain.txt
+            logcat_frida.txt
+            hook_out.txt
+          if-no-files-found: warn
+
+      - name: cleanup
+        if: always()
+        run: sudo docker rm -f redroid 2>/dev/null || true
