@@ -12,25 +12,34 @@ jobs:
 
       - name: binder + redroid
         run: |
-          sudo modprobe binder_linux devices="binder,hwbinder,vndbinder"
+          set -x
+          sudo modprobe binder_linux devices="binder,hwbinder,vndbinder" || true
           sudo mkdir -p /dev/binderfs
-          sudo mount -t binder binder /dev/binderfs
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq adb xz-utils python3-pip >/dev/null 2>&1
+          sudo mount -t binder binder /dev/binderfs || true
+          ls -la /dev/binderfs | head -8
+          sudo apt-get update -qq || true
+          sudo apt-get install -y -qq adb xz-utils python3-pip || true
           sudo docker run -d --privileged --name redroid \
             -v /dev/binderfs:/dev/binderfs \
             -p 5555:5555 \
             redroid/redroid:12.0.0-latest \
             androidboot.redroid_gpu_mode=software
-          sleep 10
+          sleep 20
           adb connect localhost:5555 || true
-          for i in $(seq 1 30); do
-            ok=$(adb -s localhost:5555 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
-            [ "$ok" = "1" ] && break
-            sleep 3
+          BOOTED=0
+          for i in $(seq 1 60); do
+            st=$(adb -s localhost:5555 get-state 2>/dev/null || true)
+            if [ "$st" = "device" ]; then
+              ok=$(adb -s localhost:5555 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
+              if [ "$ok" = "1" ]; then BOOTED=1; echo "booted after $((i*5))s"; break; fi
+            else
+              adb connect localhost:5555 >/dev/null 2>&1 || true
+            fi
+            sleep 5
           done
-          adb devices
-          adb -s localhost:5555 shell getprop sys.boot_completed
+          adb devices || true
+          adb -s localhost:5555 shell getprop sys.boot_completed || true
+          if [ "$BOOTED" != "1" ]; then sudo docker logs redroid 2>&1 | tail -50; exit 1; fi
 
       - name: download payload
         run: |
@@ -40,8 +49,8 @@ jobs:
 
       - name: install app
         run: |
-          adb -s localhost:5555 install -r -g app.apk 2>&1 | tail -2
-          adb -s localhost:5555 shell pm path com.ihuman.pinyin
+          adb -s localhost:5555 install -r -g app.apk 2>&1 | tail -3
+          adb -s localhost:5555 shell pm path com.ihuman.pinyin || true
 
       - name: plain launch probe
         run: |
@@ -65,8 +74,8 @@ jobs:
           sleep 3
           adb -s localhost:5555 shell "nohup /data/local/tmp/frida-server -D >/dev/null 2>&1 &" || true
           sleep 3
-          adb -s localhost:5555 shell "ps -A | grep frida" || true
-          adb -s localhost:5555 forward tcp:27042 tcp:27042
+          adb -s localhost:5555 shell "ps -A | grep -a frida" || true
+          adb -s localhost:5555 forward tcp:27042 tcp:27042 || true
           pip install -q frida==17.24.3
 
       - name: frida spawn capture
@@ -74,7 +83,7 @@ jobs:
           adb -s localhost:5555 shell am force-stop com.ihuman.pinyin || true
           timeout 240 python3 tools/run_capture.py 180 > hook_out.txt 2>&1 || true
           echo "===== hook_out ====="
-          tail -60 hook_out.txt
+          tail -80 hook_out.txt || true
           adb -s localhost:5555 logcat -d -v time > logcat_frida.txt 2>/dev/null || true
           echo "===== frida-run crash markers ====="
           grep -aE "0xdead|Fatal signal" logcat_frida.txt | tail -10 || true
