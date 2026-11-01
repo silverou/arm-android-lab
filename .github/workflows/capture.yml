@@ -36,8 +36,7 @@ jobs:
           for i in $(seq 1 60); do
             st=$(adb -s localhost:5555 get-state 2>/dev/null || true)
             if [ "$st" = "device" ]; then
-              ok=$(adb -s localhost:5555 shell getprop sys.boot_completed 2>/dev/null | tr -d '
-' || true)
+              ok=$(adb -s localhost:5555 shell getprop sys.boot_completed 2>/dev/null | tr -d '[:space:]' || true)
               if [ "$ok" = "1" ]; then BOOTED=1; echo "booted after $((i*5))s"; break; fi
             else
               adb connect localhost:5555 >/dev/null 2>&1 || true
