@@ -10,27 +10,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: binder + redroid
+      - name: binder setup
         run: |
           set -x
-          sudo modprobe binder_linux devices="binder,hwbinder,vndbinder" || true
+          sudo modprobe binder_linux devices="binder,hwbinder,vndbinder"
           sudo mkdir -p /dev/binderfs
-          sudo mount -t binder binder /dev/binderfs || true
+          sudo mount -t binder binder /dev/binderfs
           ls -la /dev/binderfs | head -8
-          sudo apt-get update -qq || true
-          sudo apt-get install -y -qq adb xz-utils python3-pip || true
-          sudo docker run -d --privileged --name redroid \
-            -v /dev/binderfs:/dev/binderfs \
-            -p 5555:5555 \
-            redroid/redroid:12.0.0-latest \
-            androidboot.redroid_gpu_mode=software
+          echo binder-ok
+
+      - name: redroid image pull
+        run: |
+          echo "start $(date -u +%T)"
+          timeout 480 sudo docker pull redroid/redroid:12.0.0-latest
+          echo "pulled $(date -u +%T)"
+
+      - name: redroid boot
+        run: |
+          set -x
+          echo "boot start $(date -u +%T)"
+          sudo docker run -d --privileged --name redroid             -v /dev/binderfs:/dev/binderfs             -p 5555:5555             redroid/redroid:12.0.0-latest             androidboot.redroid_gpu_mode=software
           sleep 20
           adb connect localhost:5555 || true
           BOOTED=0
           for i in $(seq 1 60); do
             st=$(adb -s localhost:5555 get-state 2>/dev/null || true)
             if [ "$st" = "device" ]; then
-              ok=$(adb -s localhost:5555 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
+              ok=$(adb -s localhost:5555 shell getprop sys.boot_completed 2>/dev/null | tr -d '' || true)
               if [ "$ok" = "1" ]; then BOOTED=1; echo "booted after $((i*5))s"; break; fi
             else
               adb connect localhost:5555 >/dev/null 2>&1 || true
@@ -39,7 +45,8 @@ jobs:
           done
           adb devices || true
           adb -s localhost:5555 shell getprop sys.boot_completed || true
-          if [ "$BOOTED" != "1" ]; then sudo docker logs redroid 2>&1 | tail -50; exit 1; fi
+          if [ "$BOOTED" != "1" ]; then sudo docker logs redroid 2>&1 | tail -60; exit 1; fi
+          echo "boot done $(date -u +%T)"
 
       - name: download payload
         run: |
