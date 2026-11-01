@@ -1,0 +1,60 @@
+name: probe
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  binder-probe:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - name: env info
+        run: |
+          uname -a
+          nproc
+          free -h
+          echo "--- kernel config (binder) ---"
+          (zcat /proc/config.gz 2>/dev/null || cat /boot/config-$(uname -r) 2>/dev/null) | grep -E "CONFIG_ANDROID_BINDER" || echo "no kernel config visible"
+
+      - name: binder setup
+        run: |
+          sudo modprobe binder_linux devices="binder,hwbinder,vndbinder" 2>&1 || true
+          sudo lsmod | grep -i binder || echo "module not loadable"
+          sudo mkdir -p /dev/binderfs
+          sudo mount -t binder binder /dev/binderfs 2>&1 || echo "binderfs mount failed"
+          ls -la /dev/binderfs 2>/dev/null | head -10
+
+      - name: docker info
+        run: |
+          docker version --format '{{.Server.Version}}' || true
+          docker run --rm arm64v8/busybox uname -m || echo "arm64 container failed"
+
+      - name: redroid smoke test
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq adb >/dev/null 2>&1 || true
+          sudo docker run -d --privileged --name redroid \
+            -v /dev/binderfs:/dev/binderfs \
+            -p 5555:5555 \
+            redroid/redroid:12.0.0-latest \
+            androidboot.redroid_gpu_mode=software 2>&1 | tail -2
+          sleep 10
+          adb connect localhost:5555 || true
+          sleep 25
+          adb devices
+          echo "--- guest props ---"
+          for p in ro.build.version.release ro.product.cpu.abi ro.build.type ro.product.model ro.build.fingerprint; do
+            echo -n "$p = "
+            adb -s localhost:5555 shell getprop $p 2>/dev/null || echo "(no shell)"
+          done
+          echo "--- guest id ---"
+          adb -s localhost:5555 shell id 2>/dev/null || true
+          adb -s localhost:5555 shell "ls /dev/binder* 2>/dev/null" || true
+
+      - name: redroid logs
+        if: always()
+        run: sudo docker logs redroid 2>&1 | tail -40
+
+      - name: cleanup
+        if: always()
+        run: sudo docker rm -f redroid 2>/dev/null || true
