@@ -42,36 +42,48 @@ jobs:
           IP=$(sudo docker inspect -f '{{.NetworkSettings.IPAddress}}' redroid)
           echo "bridge ip $IP"
           adb kill-server || true
+          echo "--- host gpu ---"
+          ls -la /dev/dri 2>&1 | head -5 || true
+          echo "--- guest gpu/egl inventory ---"
+          sudo docker exec redroid /system/bin/sh -c '
+            export PATH=/system/bin:$PATH
+            echo "gpu_mode=$(getprop ro.boot.redroid_gpu_mode)"
+            getprop | grep -E "ro\.hardware|debug\.egl|renderengine|redroid|ro\.gfx" || true
+            echo "== /system/lib64/egl =="
+            ls -la /system/lib64/egl/ 2>/dev/null || echo none
+            echo "== /vendor/lib64/egl =="
+            ls -la /vendor/lib64/egl/ 2>/dev/null || echo none
+            echo "== /system_ext/lib64/egl =="
+            ls -la /system_ext/lib64/egl/ 2>/dev/null || echo none
+            echo "== hw modules =="
+            ls /vendor/lib64/hw/ /system/lib64/hw/ 2>/dev/null | head -30 || true
+          ' || true
+          echo "--- remediation: force swiftshader egl + restart SF ---"
+          sudo docker exec redroid /system/bin/sh -c '
+            setprop ro.hardware.egl swiftshader || true
+            setprop ctl.restart surfaceflinger || true
+          ' || true
+          sleep 12
           GUEST=0
           GUEST_MODE=docker
           ADB_SERIAL="$IP:5555"
-          PKGCHECK='export PATH=/system/bin:/system/xbin:$PATH; service check package'
+          READY='export PATH=/system/bin:/system/xbin:$PATH; service check package >/dev/null 2>&1 || exit 3; [ "$(getprop init.svc.surfaceflinger)" = running ] || exit 4; [ "$(getprop init.svc.zygote)" = running ] || exit 5; echo READY'
+          hits=0
           for i in $(seq 1 48); do
-            ok=$(sudo docker exec redroid /system/bin/sh -c "$PKGCHECK" 2>/dev/null || true)
-            case "$ok" in
-              *found*)
-                GUEST=1; GUEST_MODE=docker
-                echo "PMS up (docker exec) after $((i*5))s"
-                break
-                ;;
-            esac
-            st=$(timeout 5 adb -s "$ADB_SERIAL" get-state 2>/dev/null | tr -d '[:space:]' || true)
-            if [ "$st" = "device" ]; then
-              ok=$(timeout 5 adb -s "$ADB_SERIAL" shell "$PKGCHECK" 2>/dev/null || true)
-              case "$ok" in
-                *found*)
-                  GUEST=1; GUEST_MODE=adb
-                  echo "PMS up (adb) after $((i*5))s"
-                  break
-                  ;;
-              esac
-            else
-              timeout 5 adb connect "$ADB_SERIAL" >/dev/null 2>&1 || true
+            ok=0
+            if sudo docker exec redroid /system/bin/sh -c "$READY" >/dev/null 2>&1; then
+              ok=1
+            fi
+            if [ "$ok" = "1" ]; then hits=$((hits+1)); else hits=0; fi
+            if [ "$hits" -ge 2 ]; then
+              GUEST=1
+              echo "READY stable after $((i*5))s mode=$GUEST_MODE"
+              break
             fi
             sleep 5
           done
           echo "--- guest diagnostics ---"
-          sudo docker exec redroid /system/bin/sh -c 'export PATH=/system/bin:$PATH; echo boot_completed=$(getprop sys.boot_completed); echo zygote=$(getprop init.svc.zygote); echo bootanim=$(getprop init.svc.bootanim); echo surfaceflinger=$(getprop init.svc.surfaceflinger)' 2>/dev/null || true
+          sudo docker exec redroid /system/bin/sh -c 'export PATH=/system/bin:$PATH; echo boot_completed=$(getprop sys.boot_completed); echo zygote=$(getprop init.svc.zygote); echo bootanim=$(getprop init.svc.bootanim); echo surfaceflinger=$(getprop init.svc.surfaceflinger); echo hwcomposer=$(getprop init.svc.vendor.hwcomposer-2-1); echo egl_prop=$(getprop ro.hardware.egl)' 2>/dev/null || true
           sudo docker exec redroid /system/bin/sh -c 'ps -A | grep -E "zygote|system_server|servicemanager|surfaceflinger|adbd" || echo NO_CORE_SERVICES' 2>/dev/null || true
           echo "--- restarting services ---"
           sudo docker exec redroid /system/bin/sh -c 'getprop | grep -E "init.svc.*restarting" | head -15' 2>/dev/null || true
@@ -93,7 +105,7 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "GUEST_MODE=$GUEST_MODE"
           if [ "$GUEST" != "1" ]; then
-            echo "PMS never came up; guest boot stalled"
+            echo "framework never became stable; guest boot stalled"
             exit 1
           fi
           echo "boot done $(date -u +%T)"
