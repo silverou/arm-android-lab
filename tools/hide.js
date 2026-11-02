@@ -1,7 +1,7 @@
 'use strict';
 /*
  * Scrub frida-owned thread names before app code runs so anti-frida
- * scans of /proc/self/task/*/comm only see boring names.
+ * scans of /proc/self/task/<tid>/comm only see boring names.
  */
 var openF = new NativeFunction(Module.getGlobalExportByName('open'), 'int', ['pointer', 'int', 'int']);
 var writeF = new NativeFunction(Module.getGlobalExportByName('write'), 'long', ['int', 'pointer', 'long']);

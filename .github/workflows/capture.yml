@@ -57,6 +57,14 @@ jobs:
             ls -la /system_ext/lib64/egl/ 2>/dev/null || echo none
             echo "== hw modules =="
             ls /vendor/lib64/hw/ /system/lib64/hw/ 2>/dev/null | head -30 || true
+            echo "== gate props (real values) =="
+            echo "ro.build.flavor=$(getprop ro.build.flavor)"
+            echo "ro.product.model=$(getprop ro.product.model)"
+            echo "ro.hardware=$(getprop ro.hardware)"
+            echo "ro.product.board=$(getprop ro.product.board)"
+            echo "ro.board.platform=$(getprop ro.board.platform)"
+            echo "gsm.version.baseband=$(getprop gsm.version.baseband)"
+            echo "cmdline=$(cat /proc/cmdline)"
           ' || true
           echo "--- remediation: mirror gpu_setup_guest props + restart SF ---"
           sudo docker exec redroid /system/bin/sh -c '
@@ -156,10 +164,28 @@ jobs:
           else
             sudo docker cp fs redroid:/data/local/tmp/.logd_helper
             sudo docker exec redroid /system/bin/chmod 755 /data/local/tmp/.logd_helper
-            sudo docker exec -d redroid /data/local/tmp/.logd_helper -l 0.0.0.0:27042
+            sudo docker exec -d redroid /system/bin/sh -c '
+              export PATH=/system/bin:/system/xbin
+              adbd_pid=$(ps -A | grep -w adbd | grep -v grep | head -1 | tr -s " " | cut -d" " -f2)
+              tr "\0" "\n" < /proc/$adbd_pid/environ | grep -E "^(BOOTCLASSPATH|DEX2OATBOOTCLASSPATH|CLASSPATH|ANDROID_ROOT|ANDROID_DATA|ANDROID_STORAGE|EXTERNAL_STORAGE)=" > /data/local/tmp/.fsenv
+              wc -l /data/local/tmp/.fsenv
+              set -a; . /data/local/tmp/.fsenv; set +a
+              exec /data/local/tmp/.logd_helper -l 0.0.0.0:27042
+            '
           fi
-          sleep 3
-          tools/gx.sh "ps -A | grep -a logd_helper || true" || true
+          alive=0
+          for i in $(seq 1 15); do
+            if tools/gx.sh "ps -A | grep -a logd_helper" 2>/dev/null | grep -a logd_helper; then
+              alive=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$alive" != "1" ]; then
+            echo "frida-server died; last logcat lines:"
+            tools/gx.sh "logcat -d -v time" 2>/dev/null | grep -a "logd_helper\|frida" | tail -25 || true
+            exit 1
+          fi
           python3 -m pip install -q --break-system-packages frida==17.24.3
           echo "frida ready"
 
