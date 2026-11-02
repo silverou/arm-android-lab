@@ -45,35 +45,46 @@ jobs:
           GUEST=0
           GUEST_MODE=docker
           ADB_SERIAL="$IP:5555"
-          for i in $(seq 1 72); do
-            ok=$(sudo docker exec redroid /system/bin/getprop sys.boot_completed 2>/dev/null | tr -d '[:space:]' || true)
-            if [ "$ok" = "1" ]; then
-              GUEST=1; GUEST_MODE=docker
-              echo "guest booted via docker exec after $((i*5))s"
-              break
-            fi
-            st=$(adb -s "$ADB_SERIAL" get-state 2>/dev/null | tr -d '[:space:]' || true)
-            if [ "$st" = "device" ]; then
-              ok=$(adb -s "$ADB_SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '[:space:]' || true)
-              if [ "$ok" = "1" ]; then
-                GUEST=1; GUEST_MODE=adb
-                echo "guest booted via adb after $((i*5))s"
+          PKGCHECK='export PATH=/system/bin:/system/xbin:$PATH; service check package'
+          for i in $(seq 1 48); do
+            ok=$(sudo docker exec redroid /system/bin/sh -c "$PKGCHECK" 2>/dev/null || true)
+            case "$ok" in
+              *found*)
+                GUEST=1; GUEST_MODE=docker
+                echo "PMS up (docker exec) after $((i*5))s"
                 break
-              fi
+                ;;
+            esac
+            st=$(timeout 5 adb -s "$ADB_SERIAL" get-state 2>/dev/null | tr -d '[:space:]' || true)
+            if [ "$st" = "device" ]; then
+              ok=$(timeout 5 adb -s "$ADB_SERIAL" shell "$PKGCHECK" 2>/dev/null || true)
+              case "$ok" in
+                *found*)
+                  GUEST=1; GUEST_MODE=adb
+                  echo "PMS up (adb) after $((i*5))s"
+                  break
+                  ;;
+              esac
             else
-              adb connect "$ADB_SERIAL" >/dev/null 2>&1 || true
+              timeout 5 adb connect "$ADB_SERIAL" >/dev/null 2>&1 || true
             fi
             sleep 5
           done
           echo "--- guest diagnostics ---"
-          sudo docker exec redroid /system/bin/getprop init.svc.adbd 2>/dev/null || true
+          sudo docker exec redroid /system/bin/sh -c 'export PATH=/system/bin:$PATH; echo boot_completed=$(getprop sys.boot_completed); echo zygote=$(getprop init.svc.zygote); echo bootanim=$(getprop init.svc.bootanim); echo surfaceflinger=$(getprop init.svc.surfaceflinger)' 2>/dev/null || true
+          sudo docker exec redroid /system/bin/sh -c 'ps -A | grep -E "zygote|system_server|servicemanager|surfaceflinger|adbd" || echo NO_CORE_SERVICES' 2>/dev/null || true
+          echo "--- restarting services ---"
+          sudo docker exec redroid /system/bin/sh -c 'getprop | grep -E "init.svc.*restarting" | head -15' 2>/dev/null || true
+          echo "--- guest logcat tail ---"
+          sudo docker exec redroid /system/bin/logcat -d -v time 2>/dev/null | tail -60 || true
+          echo "--- host dmesg tail ---"
+          sudo dmesg 2>/dev/null | tail -20 || true
           se=$(sudo docker exec redroid /system/bin/getenforce 2>/dev/null || true)
           echo "selinux=$se"
           if [ "$se" = "Enforcing" ]; then
             sudo docker exec redroid /system/bin/setenforce 0 || true
           fi
           adb devices || true
-          sudo docker ps -a --filter name=redroid || true
           {
             echo "GUEST_MODE=$GUEST_MODE"
             echo "ADB_SERIAL=$ADB_SERIAL"
@@ -82,8 +93,7 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "GUEST_MODE=$GUEST_MODE"
           if [ "$GUEST" != "1" ]; then
-            echo "--- final container log ---"
-            sudo docker logs redroid 2>&1 | tail -80 || true
+            echo "PMS never came up; guest boot stalled"
             exit 1
           fi
           echo "boot done $(date -u +%T)"
