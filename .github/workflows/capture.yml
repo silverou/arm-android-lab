@@ -38,7 +38,7 @@ jobs:
             -p 5556:5555 \
             -p 127.0.0.1:27042:27042 \
             redroid/redroid:12.0.0-latest \
-            androidboot.redroid_gpu_mode=software
+            androidboot.redroid_gpu_mode=guest
           IP=$(sudo docker inspect -f '{{.NetworkSettings.IPAddress}}' redroid)
           echo "bridge ip $IP"
           adb kill-server || true
@@ -58,9 +58,11 @@ jobs:
             echo "== hw modules =="
             ls /vendor/lib64/hw/ /system/lib64/hw/ 2>/dev/null | head -30 || true
           ' || true
-          echo "--- remediation: force swiftshader egl + restart SF ---"
+          echo "--- remediation: mirror gpu_setup_guest props + restart SF ---"
           sudo docker exec redroid /system/bin/sh -c '
-            setprop ro.hardware.egl swiftshader || true
+            setprop ro.hardware.egl angle || true
+            setprop ro.hardware.gralloc redroid || true
+            setprop ro.hardware.vulkan pastel || true
             setprop ctl.restart surfaceflinger || true
           ' || true
           sleep 12
