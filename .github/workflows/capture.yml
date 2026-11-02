@@ -18,7 +18,6 @@ jobs:
           sudo mount -t binder binder /dev/binderfs
           ls -la /dev/binderfs | head -8
           command -v adb || { timeout 300 bash -c 'sudo apt-get update -qq && sudo apt-get install -y -qq adb'; }
-          command -v adb
           command -v xz
           command -v python3
           echo binder-ok
@@ -37,33 +36,52 @@ jobs:
           sudo docker run -d --privileged --name redroid \
             -v /dev/binderfs:/dev/binderfs \
             -p 5556:5555 \
+            -p 127.0.0.1:27042:27042 \
             redroid/redroid:12.0.0-latest \
             androidboot.redroid_gpu_mode=software
-          sleep 20
-          echo "--- container state ---"
-          sudo docker ps -a --filter name=redroid || true
-          sudo docker inspect -f 'status={{.State.Status}} exit={{.State.ExitCode}}' redroid || true
-          echo "--- listeners ---"
-          (ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null) | grep -E ":555" | head -5 || true
-          echo "--- container log head ---"
-          sudo docker logs redroid 2>&1 | head -40 || true
-          adb connect localhost:5556 || true
-          BOOTED=0
-          for i in $(seq 1 60); do
-            st=$(adb -s localhost:5556 get-state 2>/dev/null | tr -d '[:space:]' || true)
+          IP=$(sudo docker inspect -f '{{.NetworkSettings.IPAddress}}' redroid)
+          echo "bridge ip $IP"
+          adb kill-server || true
+          GUEST=0
+          GUEST_MODE=docker
+          ADB_SERIAL="$IP:5555"
+          for i in $(seq 1 72); do
+            ok=$(sudo docker exec redroid /system/bin/getprop sys.boot_completed 2>/dev/null | tr -d '[:space:]' || true)
+            if [ "$ok" = "1" ]; then
+              GUEST=1; GUEST_MODE=docker
+              echo "guest booted via docker exec after $((i*5))s"
+              break
+            fi
+            st=$(adb -s "$ADB_SERIAL" get-state 2>/dev/null | tr -d '[:space:]' || true)
             if [ "$st" = "device" ]; then
-              ok=$(adb -s localhost:5556 shell getprop sys.boot_completed 2>/dev/null | tr -d '[:space:]' || true)
-              if [ "$ok" = "1" ]; then BOOTED=1; echo "booted after $((i*5))s"; break; fi
+              ok=$(adb -s "$ADB_SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '[:space:]' || true)
+              if [ "$ok" = "1" ]; then
+                GUEST=1; GUEST_MODE=adb
+                echo "guest booted via adb after $((i*5))s"
+                break
+              fi
             else
-              adb connect localhost:5556 >/dev/null 2>&1 || true
+              adb connect "$ADB_SERIAL" >/dev/null 2>&1 || true
             fi
             sleep 5
           done
+          echo "--- guest diagnostics ---"
+          sudo docker exec redroid /system/bin/getprop init.svc.adbd 2>/dev/null || true
+          se=$(sudo docker exec redroid /system/bin/getenforce 2>/dev/null || true)
+          echo "selinux=$se"
+          if [ "$se" = "Enforcing" ]; then
+            sudo docker exec redroid /system/bin/setenforce 0 || true
+          fi
           adb devices || true
-          adb -s localhost:5556 shell getprop sys.boot_completed || true
-          if [ "$BOOTED" != "1" ]; then
-            echo "--- final container state ---"
-            sudo docker inspect -f 'status={{.State.Status}} exit={{.State.ExitCode}}' redroid || true
+          sudo docker ps -a --filter name=redroid || true
+          {
+            echo "GUEST_MODE=$GUEST_MODE"
+            echo "ADB_SERIAL=$ADB_SERIAL"
+            echo "BRIDGE_IP=$IP"
+            echo "FRIDA_DEVICE=$IP:27042"
+          } >> "$GITHUB_ENV"
+          echo "GUEST_MODE=$GUEST_MODE"
+          if [ "$GUEST" != "1" ]; then
             echo "--- final container log ---"
             sudo docker logs redroid 2>&1 | tail -80 || true
             exit 1
@@ -78,42 +96,58 @@ jobs:
 
       - name: install app
         run: |
-          adb -s localhost:5556 install -r -g app.apk 2>&1 | tail -3
-          adb -s localhost:5556 shell pm path com.ihuman.pinyin || true
+          set -x
+          if [ "$GUEST_MODE" = "adb" ]; then
+            adb -s "$ADB_SERIAL" push app.apk /data/local/tmp/app.apk
+          else
+            sudo docker cp app.apk redroid:/data/local/tmp/app.apk
+          fi
+          out=$(tools/gx.sh "pm install -r -g /data/local/tmp/app.apk" 2>&1 | tail -5)
+          echo "$out"
+          echo "$out" | grep -a Success
+          tools/gx.sh "pm path com.ihuman.pinyin"
 
       - name: plain launch probe
         run: |
-          adb -s localhost:5556 logcat -c || true
-          adb -s localhost:5556 shell am start -n com.ihuman.pinyin/org.cocos2dx.lua.AppActivity || true
+          set -x
+          tools/gx.sh "logcat -c" || true
+          tools/gx.sh "am start -n com.ihuman.pinyin/org.cocos2dx.lua.AppActivity" || true
           sleep 45
           echo "--- pid ---"
-          adb -s localhost:5556 shell "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
+          tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
           echo "--- crash markers ---"
-          adb -s localhost:5556 logcat -d -v time 2>/dev/null | grep -aE "0xdead|Fatal signal|x_initialize|MyApplication|ClassNotFound" | tail -20 || true
-          adb -s localhost:5556 logcat -d -v time > logcat_plain.txt 2>/dev/null || true
-          adb -s localhost:5556 shell am force-stop com.ihuman.pinyin || true
+          tools/gx.sh "logcat -d -v time" 2>/dev/null | grep -aE "0xdead|Fatal signal|x_initialize|MyApplication|ClassNotFound|cocos" | tail -20 || true
+          tools/gx.sh "logcat -d -v time" > logcat_plain.txt 2>/dev/null || true
+          tools/gx.sh "am force-stop com.ihuman.pinyin" || true
 
       - name: frida setup
         run: |
+          set -x
           curl -sL -o fs.xz "https://github.com/frida/frida/releases/download/17.24.3/frida-server-17.24.3-android-arm64.xz"
           xz -d fs.xz
-          adb -s localhost:5556 push fs /data/local/tmp/frida-server
-          adb -s localhost:5556 shell "chmod 755 /data/local/tmp/frida-server"
-          adb -s localhost:5556 root || true
+          if [ "$GUEST_MODE" = "adb" ]; then
+            adb -s "$ADB_SERIAL" push fs /data/local/tmp/.logd_helper
+            adb -s "$ADB_SERIAL" shell "chmod 755 /data/local/tmp/.logd_helper"
+            adb -s "$ADB_SERIAL" shell "nohup /data/local/tmp/.logd_helper -l 0.0.0.0:27042 >/dev/null 2>&1 &" || true
+          else
+            sudo docker cp fs redroid:/data/local/tmp/.logd_helper
+            sudo docker exec redroid /system/bin/chmod 755 /data/local/tmp/.logd_helper
+            sudo docker exec -d redroid /data/local/tmp/.logd_helper -l 0.0.0.0:27042
+          fi
           sleep 3
-          adb -s localhost:5556 shell "nohup /data/local/tmp/frida-server -D >/dev/null 2>&1 &" || true
-          sleep 3
-          adb -s localhost:5556 shell "ps -A | grep -a frida" || true
-          adb -s localhost:5556 forward tcp:27042 tcp:27042 || true
-          pip install -q frida==17.24.3
+          tools/gx.sh "ps -A | grep -a logd_helper || true" || true
+          python3 -m pip install -q --break-system-packages frida==17.24.3
+          echo "frida ready"
 
       - name: frida spawn capture
         run: |
-          adb -s localhost:5556 shell am force-stop com.ihuman.pinyin || true
+          set -x
+          tools/gx.sh "am force-stop com.ihuman.pinyin" || true
+          echo "using FRIDA_DEVICE=$FRIDA_DEVICE"
           timeout 240 python3 tools/run_capture.py 180 > hook_out.txt 2>&1 || true
           echo "===== hook_out ====="
           tail -80 hook_out.txt || true
-          adb -s localhost:5556 logcat -d -v time > logcat_frida.txt 2>/dev/null || true
+          tools/gx.sh "logcat -d -v time" > logcat_frida.txt 2>/dev/null || true
           echo "===== frida-run crash markers ====="
           grep -aE "0xdead|Fatal signal" logcat_frida.txt | tail -10 || true
 

@@ -4,6 +4,7 @@ Usage: python run_capture.py <duration_seconds> [extra_bundle.js]
 Connects to frida-server forwarded at 127.0.0.1:27042.
 """
 import json
+import os
 import sys
 import time
 
@@ -19,12 +20,14 @@ def on_message(m, data, out):
 
 def main():
     dur = int(sys.argv[1]) if len(sys.argv) > 1 else 150
-    scripts_paths = ["tools/keyhook.js"]
+    scripts_paths = ["tools/hide.js", "tools/keyhook.js"]
     if len(sys.argv) > 2:
         scripts_paths.append(sys.argv[2])
 
+    addr = os.environ.get("FRIDA_DEVICE", "127.0.0.1:27042")
+    print("DEVICE", addr, flush=True)
     mgr = frida.get_device_manager()
-    dev = mgr.add_remote_device("127.0.0.1:27042")
+    dev = mgr.add_remote_device(addr)
     pid = dev.spawn(["com.ihuman.pinyin"])
     print("SPAWN", pid, flush=True)
     sess = dev.attach(pid)
