@@ -1,14 +1,12 @@
 'use strict';
 /*
- * Scrub frida-owned thread names before app code runs so anti-frida
- * scans of /proc/self/task/<tid>/comm only see boring names.
+ * Uniform thread identity: rename EVERY thread comm to m.ihuman.pinyin so
+ * real /proc/self/task/<tid>/status reads present a uniform Name field (the
+ * shape that passed the gate on MuMu), and intercept prctl(PR_SET_NAME)
+ * so threads created later are named uniformly at birth.
  */
-var openF = new NativeFunction(Module.getGlobalExportByName('open'), 'int', ['pointer', 'int', 'int']);
-var writeF = new NativeFunction(Module.getGlobalExportByName('write'), 'long', ['int', 'pointer', 'long']);
-var closeF = new NativeFunction(Module.getGlobalExportByName('close'), 'int', ['int']);
-
-var BAD = ['gum-js', 'gmain', 'gdbus', 'frida', 'ptmain', 'js-main', 'pool-frida'];
-var FAKE = ['Jit thread pool', 'Binder:2843_2', 'FinalizerDae', 'Profile Saver', 'ADB-JDWP Conn'];
+var TARGET = 'm.ihuman.pinyin';
+var TARGET15 = 'm.ihuman.pinyin\u0000';
 
 function setComm(tid, name) {
   var path = Memory.allocUtf8String('/proc/' + Process.id + '/task/' + tid + '/comm');
@@ -20,24 +18,39 @@ function setComm(tid, name) {
   return true;
 }
 
+var openF = new NativeFunction(Module.getGlobalExportByName('open'), 'int', ['pointer', 'int', 'int']);
+var writeF = new NativeFunction(Module.getGlobalExportByName('write'), 'long', ['int', 'pointer', 'long']);
+var closeF = new NativeFunction(Module.getGlobalExportByName('close'), 'int', ['int']);
+
 function scrub() {
-  var changed = [];
+  var renamed = 0;
   var threads;
   try { threads = Process.enumerateThreads(); } catch (e) { return; }
   for (var i = 0; i < threads.length; i++) {
     var t = threads[i];
-    var n = (t.name || '').toLowerCase();
-    for (var j = 0; j < BAD.length; j++) {
-      if (n.indexOf(BAD[j]) >= 0) {
-        var fake = FAKE[(t.id + j) % FAKE.length];
-        if (setComm(t.id, fake)) changed.push({ tid: t.id, was: t.name, now: fake });
-        break;
-      }
+    if ((t.name || '') !== TARGET) {
+      if (setComm(t.id, TARGET)) renamed++;
     }
   }
-  if (changed.length) send({ ev: 'scrubbed', list: changed });
+  if (renamed) send({ ev: 'scrubbed', n: renamed });
+}
+
+// force every future PR_SET_NAME to the uniform name
+try {
+  var prctlP = Module.getGlobalExportByName('prctl');
+  var uniform = Memory.allocUtf8String(TARGET);
+  Interceptor.attach(prctlP, {
+    onEnter: function (a) {
+      try {
+        if (a[0].toInt32() === 15) a[2] = uniform; // PR_SET_NAME
+      } catch (e) {}
+    }
+  });
+  send({ ev: 'prctl_hooked' });
+} catch (e) {
+  send({ ev: 'prctl_err', e: String(e) });
 }
 
 scrub();
-setInterval(scrub, 400);
+setInterval(scrub, 150);
 send({ ev: 'hide_ready' });

@@ -1,12 +1,12 @@
 'use strict';
 /*
- * Read-tracer: dedup-log the absolute paths and properties the shell reads,
- * with return values and errno, so a gate crash maps to the exact input.
- * Also dumps the real /proc/self/status header at load (pre any later hooks).
+ * Read-tracer: dedup-log paths/properties the shell reads (with errno),
+ * plus content snapshots of /proc/self/maps and /proc/self/cmdline
+ * (pread at offset 0 so the shell's own reads are unaffected).
  */
 var seen = {};
 var n = 0;
-var CAP = 650;
+var CAP = 700;
 
 function log(o, key) {
   if (seen[key] || n >= CAP) return;
@@ -34,16 +34,22 @@ function errnoNow() {
   }
 }
 
+var openF = new NativeFunction(Module.getGlobalExportByName('open'), 'int', ['pointer', 'int', 'int']);
+var readF = new NativeFunction(Module.getGlobalExportByName('read'), 'long', ['int', 'pointer', 'long']);
+var closeF = new NativeFunction(Module.getGlobalExportByName('close'), 'int', ['int']);
+var preadF = new NativeFunction(Module.getGlobalExportByName('pread'), 'long', ['int', 'pointer', 'long', 'long']);
+var filenoF = null;
+try {
+  filenoF = new NativeFunction(Module.getGlobalExportByName('fileno'), 'int', ['pointer']);
+} catch (e) {}
+
 // real status header at load: TracerPid tells us if frida gates via ptrace
 try {
-  var open0 = new NativeFunction(Module.getGlobalExportByName('open'), 'int', ['pointer', 'int', 'int']);
-  var read0 = new NativeFunction(Module.getGlobalExportByName('read'), 'long', ['int', 'pointer', 'long']);
-  var close0 = new NativeFunction(Module.getGlobalExportByName('close'), 'int', ['int']);
-  var fd0 = open0(Memory.allocUtf8String('/proc/self/status'), 0, 0);
+  var fd0 = openF(Memory.allocUtf8String('/proc/self/status'), 0, 0);
   if (fd0 >= 0) {
     var buf0 = Memory.alloc(2048);
-    var n0 = read0(fd0, buf0, 2047);
-    close0(fd0);
+    var n0 = readF(fd0, buf0, 2047);
+    closeF(fd0);
     if (n0 > 0) {
       var txt = buf0.readUtf8String(Number(n0));
       var keep = txt.split('\n').filter(function (l) {
@@ -58,7 +64,37 @@ try {
   send({ ev: 'status0_err', e: String(e) });
 }
 
+var BADMAP = /frida|angle|pastel|qemu|houdini|goldfish|emulator|mumu|nox|vbox|bluestacks|droid4x|tiantian|nemu|microvirt|binderfs|memtrack/i;
+
+function captureFd(fd, kind) {
+  try {
+    var out = '';
+    var buf = Memory.alloc(8192);
+    var off = 0;
+    for (var c = 0; c < 8; c++) {
+      var r = preadF(fd, buf, 8192, off);
+      if (r <= 0) break;
+      out += buf.readUtf8String(Number(r));
+      off += Number(r);
+      if (out.length > 60000) break;
+    }
+    if (kind === 'cmdline') {
+      log({ ev: 'cap', k: 'cmdline', v: out.split('\0')[0] }, 'cap|cmdline');
+      return;
+    }
+    var lines = out.split('\n');
+    var hits = [];
+    for (var i = 0; i < lines.length && hits.length < 25; i++) {
+      if (BADMAP.test(lines[i])) hits.push(lines[i]);
+    }
+    log({ ev: 'cap', k: 'maps', total: lines.length, hits: hits }, 'cap|maps');
+  } catch (e) {
+    send({ ev: 'cap_err', k: kind, e: String(e) });
+  }
+}
+
 var PATH_IDX = { openat: 1, newfstatat: 1 };
+var CAP_PATHS = { '/proc/self/maps': 'maps', '/proc/self/cmdline': 'cmdline' };
 
 function hookPath(sym, tag) {
   try {
@@ -68,12 +104,20 @@ function hookPath(sym, tag) {
       onEnter: function (a) {
         try {
           var path = a[idx].readCString();
-          if (path && path.charCodeAt(0) === 47) this.k = path;
+          if (path && path.charCodeAt(0) === 47) {
+            this.k = path;
+            this.cap = CAP_PATHS[path] || null;
+          }
         } catch (e) {}
       },
       onLeave: function (ret) {
         if (!this.k) return;
         var r = ret.toInt32();
+        var ok = tag === 'fopen' ? !ret.isNull() : r >= 0;
+        if (this.cap && ok) {
+          var fd = tag === 'fopen' ? (filenoF ? filenoF(ret) : -1) : r;
+          if (fd >= 0) captureFd(fd, this.cap);
+        }
         var o = { ev: 'tr', t: tag, p: this.k, r: r };
         if (r < 0 || (tag === 'access' && r !== 0)) o.e = errnoNow();
         log(o, tag + '|' + this.k + '|' + (o.e || 0));
@@ -84,7 +128,7 @@ function hookPath(sym, tag) {
   }
 }
 
-['fopen', 'open', 'openat', 'access', 'stat', 'lstat', 'newfstatat', 'readlink', 'opendir']
+['fopen', 'open', 'openat', 'access', 'stat', 'lstat', 'readlink', 'opendir']
   .forEach(function (s) { hookPath(s, s); });
 
 try {
