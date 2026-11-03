@@ -145,6 +145,7 @@ jobs:
           set -x
           tools/gx.sh "pm disable-user --user 0 com.android.launcher3" || true
           tools/gx.sh "pm disable-user --user 0 com.android.systemui" || true
+          tools/gx.sh "pm disable-user --user 0 com.android.settings" || true
           tools/gx.sh "logcat -c" || true
           tools/gx.sh "am start -n com.ihuman.pinyin/org.cocos2dx.lua.AppActivity" || true
           sleep 45
@@ -196,11 +197,13 @@ jobs:
         run: |
           set -x
           tools/gx.sh "am force-stop com.ihuman.pinyin" || true
+          tools/gx.sh "logcat -c" || true
           echo "using FRIDA_DEVICE=$FRIDA_DEVICE"
           BUNDLE_SET=v21 timeout 300 python3 tools/run_capture.py 240 > hook_out.txt 2>&1 || true
           echo "===== hook_out attempt1 (v21) ====="
           tail -40 hook_out.txt || true
           tools/gx.sh "logcat -d -v time" > logcat_att1.txt 2>/dev/null || true
+          grep -aE "0xdead|Fatal signal" logcat_att1.txt | grep -av launcher | grep -av systemui | grep -av settings | tail -8 || true
           echo "--- server state after attempt1 ---"
           sudo docker exec redroid /system/bin/sh -c 'ps -A | grep -a logd_helper || echo SERVER_DEAD' || true
           sudo dmesg 2>/dev/null | tail -40 > dmesg_host.txt || true
@@ -212,6 +215,7 @@ jobs:
             sleep 4
             sudo docker exec redroid /system/bin/sh -c 'ps -A | grep -a logd_helper || echo SERVER_DEAD2' || true
             tools/gx.sh "am force-stop com.ihuman.pinyin" || true
+            tools/gx.sh "logcat -c" || true
             timeout 300 python3 tools/run_capture.py 240 > hook_out2.txt 2>&1 || true
             echo "===== hook_out attempt2 (v20) ====="
             tail -40 hook_out2.txt || true

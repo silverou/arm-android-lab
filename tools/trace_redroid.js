@@ -53,7 +53,7 @@ try {
     if (n0 > 0) {
       var txt = buf0.readUtf8String(Number(n0));
       var keep = txt.split('\n').filter(function (l) {
-        return /^(Name|TracerPid|Threads|Pid|Tgid):/.test(l);
+        return /^(Name|PPid|TracerPid|Threads|Pid|Tgid):/.test(l);
       });
       send({ ev: 'status0', s: keep.join(' | ') });
     }
@@ -68,8 +68,20 @@ var BADMAP = /frida|angle|pastel|qemu|houdini|goldfish|emulator|mumu|nox|vbox|bl
 
 function captureFd(fd, kind) {
   try {
-    var out = '';
     var buf = Memory.alloc(8192);
+    if (kind === 'cmdline') {
+      var r0 = preadF(fd, buf, 512, 0);
+      if (r0 <= 0) return;
+      var arr = new Uint8Array(buf.readByteArray(Number(r0)));
+      var s = '';
+      for (var ci = 0; ci < arr.length; ci++) {
+        if (arr[ci] === 0) break;
+        s += String.fromCharCode(arr[ci]);
+      }
+      log({ ev: 'cap', k: 'cmdline', v: s }, 'cap|cmdline');
+      return;
+    }
+    var out = '';
     var off = 0;
     for (var c = 0; c < 8; c++) {
       var r = preadF(fd, buf, 8192, off);
@@ -77,10 +89,6 @@ function captureFd(fd, kind) {
       out += buf.readUtf8String(Number(r));
       off += Number(r);
       if (out.length > 60000) break;
-    }
-    if (kind === 'cmdline') {
-      log({ ev: 'cap', k: 'cmdline', v: out.split('\0')[0] }, 'cap|cmdline');
-      return;
     }
     var lines = out.split('\n');
     var hits = [];
