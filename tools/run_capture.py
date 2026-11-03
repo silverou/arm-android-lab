@@ -45,17 +45,21 @@ DEFAULT_SCRIPTS = [
     "tools/keyhook.js",
 ]
 # BUNDLE_SET=v21 swaps the bridge for the no-status-fakery variant;
-# BUNDLE_SET=v23 = v20 with the Threads/faketask count arithmetic fixed.
+# BUNDLE_SET=v23 = v20 with the Threads/faketask count arithmetic fixed;
+# BUNDLE_SET=v24 = v23 with the totalT scope bug fixed (counts frozen equal).
 if os.environ.get("BUNDLE_SET") == "v21":
     DEFAULT_SCRIPTS[1] = "tools/bridge_v21.js"
 elif os.environ.get("BUNDLE_SET") == "v23":
     DEFAULT_SCRIPTS[1] = "tools/bridge_v23.js"
+elif os.environ.get("BUNDLE_SET") == "v24":
+    DEFAULT_SCRIPTS[1] = "tools/bridge_v24.js"
 # Bundles too big for a single create_script message are pushed to the
 # guest filesystem; a small loader reads and evals them in-process.
 GUEST_BUNDLE_PATHS = {
     "tools/bridge_v20.js": "/data/local/tmp/v20.js",
     "tools/bridge_v21.js": "/data/local/tmp/v21.js",
     "tools/bridge_v23.js": "/data/local/tmp/v23.js",
+    "tools/bridge_v24.js": "/data/local/tmp/v24.js",
 }
 
 
