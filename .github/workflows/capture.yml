@@ -143,6 +143,8 @@ jobs:
       - name: plain launch probe
         run: |
           set -x
+          tools/gx.sh "pm disable-user --user 0 com.android.launcher3" || true
+          tools/gx.sh "pm disable-user --user 0 com.android.systemui" || true
           tools/gx.sh "logcat -c" || true
           tools/gx.sh "am start -n com.ihuman.pinyin/org.cocos2dx.lua.AppActivity" || true
           sleep 45
@@ -194,11 +196,29 @@ jobs:
           tools/gx.sh "am force-stop com.ihuman.pinyin" || true
           echo "using FRIDA_DEVICE=$FRIDA_DEVICE"
           timeout 300 python3 tools/run_capture.py 240 > hook_out.txt 2>&1 || true
-          echo "===== hook_out ====="
-          tail -80 hook_out.txt || true
+          echo "===== hook_out attempt1 ====="
+          tail -40 hook_out.txt || true
+          echo "--- server state after attempt1 ---"
+          sudo docker exec redroid /system/bin/sh -c 'ps -A | grep -a logd_helper || echo SERVER_DEAD' || true
+          sudo dmesg 2>/dev/null | tail -40 > dmesg_host.txt || true
+          if ! grep -aq "XXTEA_KEY" hook_out.txt; then
+            echo "===== attempt2: restart server ====="
+            sudo docker exec redroid /system/bin/sh -c 'kill $(pidof .logd_helper) 2>/dev/null || true'
+            sleep 2
+            sudo docker exec -d redroid /system/bin/sh /data/local/tmp/frida_launch.sh
+            sleep 4
+            sudo docker exec redroid /system/bin/sh -c 'ps -A | grep -a logd_helper || echo SERVER_DEAD2' || true
+            tools/gx.sh "am force-stop com.ihuman.pinyin" || true
+            timeout 300 python3 tools/run_capture.py 240 > hook_out2.txt 2>&1 || true
+            echo "===== hook_out attempt2 ====="
+            tail -40 hook_out2.txt || true
+            cat hook_out2.txt >> hook_out.txt || true
+            sudo dmesg 2>/dev/null | tail -40 > dmesg_host2.txt || true
+          fi
+          echo "===== crash markers ====="
           tools/gx.sh "logcat -d -v time" > logcat_frida.txt 2>/dev/null || true
-          echo "===== frida-run crash markers ====="
-          grep -aE "0xdead|Fatal signal" logcat_frida.txt | tail -10 || true
+          grep -aE "0xdead|Fatal signal" logcat_frida.txt | grep -av launcher3 | grep -av systemui | tail -10 || true
+          grep -a "XXTEA_KEY" hook_out.txt | head -3 || true
 
       - name: upload artifacts
         if: always()
@@ -209,6 +229,8 @@ jobs:
             logcat_plain.txt
             logcat_frida.txt
             hook_out.txt
+            dmesg_host.txt
+            dmesg_host2.txt
           if-no-files-found: warn
 
       - name: cleanup

@@ -68,6 +68,13 @@ def main():
         s.on("message", lambda m, d: on_message(m, d, None))
         s.load()
         scripts.append(s)
+        print("LOADED", path, "at", int(time.time()), flush=True)
+        try:
+            dev.enumerate_processes()
+            print("PING_OK after", path, flush=True)
+        except Exception as e:
+            print("PING_FAIL after", path, str(e)[:200], flush=True)
+            break
     print("SCRIPTS_LOADED", scripts_paths, flush=True)
     dev.resume(pid)
     time.sleep(dur)
