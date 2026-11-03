@@ -17,6 +17,18 @@ DEFAULT_SCRIPTS = [
     "tools/trace_redroid.js",
     "tools/keyhook.js",
 ]
+# Bundles too big for a single create_script message are pushed to the
+# guest filesystem; a small loader reads and evals them in-process.
+GUEST_BUNDLE_PATHS = {
+    "tools/bridge_v20.js": "/data/local/tmp/v20.js",
+}
+
+
+def script_source(path):
+    if path in GUEST_BUNDLE_PATHS:
+        loader = open("tools/loadfile.js", encoding="utf-8").read()
+        return loader.replace("__PATH__", GUEST_BUNDLE_PATHS[path])
+    return open(path, encoding="utf-8").read()
 
 
 def on_message(m, data, out):
@@ -63,7 +75,7 @@ def main():
 
     scripts = []
     for path in scripts_paths:
-        src = open(path, encoding="utf-8").read()
+        src = script_source(path)
         s = sess.create_script(src)
         s.on("message", lambda m, d: on_message(m, d, None))
         s.load()

@@ -162,7 +162,8 @@ jobs:
           xz -d fs.xz
           sudo docker cp fs redroid:/data/local/tmp/.logd_helper
           sudo docker cp tools/frida_launch.sh redroid:/data/local/tmp/frida_launch.sh
-          sudo docker exec redroid /system/bin/sh -c 'chmod 755 /data/local/tmp/.logd_helper /data/local/tmp/frida_launch.sh'
+          sudo docker cp tools/bridge_v20.js redroid:/data/local/tmp/v20.js
+          sudo docker exec redroid /system/bin/sh -c 'chmod 755 /data/local/tmp/.logd_helper /data/local/tmp/frida_launch.sh; chmod 644 /data/local/tmp/v20.js'
           # root is required for zygote spawn gating; adbd env (proven sufficient) is inherited
           sudo docker exec -d redroid /system/bin/sh /data/local/tmp/frida_launch.sh
           sleep 3
