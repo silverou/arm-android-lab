@@ -143,16 +143,19 @@ jobs:
       - name: plain launch probe
         run: |
           set -x
-          tools/gx.sh "pm disable-user --user 0 com.android.launcher3" || true
-          tools/gx.sh "pm disable-user --user 0 com.android.systemui" || true
-          tools/gx.sh "pm disable-user --user 0 com.android.settings" || true
+          tools/gx.sh "pm disable com.android.launcher3" || true
+          tools/gx.sh "pm disable com.android.systemui" || true
+          tools/gx.sh "pm disable com.android.settings" || true
+          tools/gx.sh "pm list packages -d" || true
           tools/gx.sh "logcat -c" || true
           tools/gx.sh "am start -n com.ihuman.pinyin/org.cocos2dx.lua.AppActivity" || true
           sleep 45
           echo "--- pid ---"
           tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
-          echo "--- crash markers ---"
-          tools/gx.sh "logcat -d -v time" 2>/dev/null | grep -aE "0xdead|Fatal signal|x_initialize|MyApplication|ClassNotFound|cocos" | tail -20 || true
+          echo "--- start evidence ---"
+          tools/gx.sh "logcat -d -v time" 2>/dev/null | grep -aE "Start proc.*ihuman|0xdead|Fatal signal|not started|blocked" | head -15 || true
+          echo "--- activity state ---"
+          tools/gx.sh "dumpsys activity activities | grep -a -B2 -A6 ihuman" 2>/dev/null | head -30 || true
           tools/gx.sh "logcat -d -v time" > logcat_plain.txt 2>/dev/null || true
           tools/gx.sh "am force-stop com.ihuman.pinyin" || true
 
@@ -199,7 +202,7 @@ jobs:
           tools/gx.sh "am force-stop com.ihuman.pinyin" || true
           tools/gx.sh "logcat -c" || true
           echo "using FRIDA_DEVICE=$FRIDA_DEVICE"
-          BUNDLE_SET=v21 timeout 300 python3 tools/run_capture.py 240 > hook_out.txt 2>&1 || true
+          DEATH_TAG=att1 BUNDLE_SET=v21 timeout 300 python3 tools/run_capture.py 240 > hook_out.txt 2>&1 || true
           echo "===== hook_out attempt1 (v21) ====="
           tail -40 hook_out.txt || true
           tools/gx.sh "logcat -d -v time" > logcat_att1.txt 2>/dev/null || true
@@ -216,7 +219,7 @@ jobs:
             sudo docker exec redroid /system/bin/sh -c 'ps -A | grep -a logd_helper || echo SERVER_DEAD2' || true
             tools/gx.sh "am force-stop com.ihuman.pinyin" || true
             tools/gx.sh "logcat -c" || true
-            timeout 300 python3 tools/run_capture.py 240 > hook_out2.txt 2>&1 || true
+            DEATH_TAG=att2 timeout 300 python3 tools/run_capture.py 240 > hook_out2.txt 2>&1 || true
             echo "===== hook_out attempt2 (v20) ====="
             tail -40 hook_out2.txt || true
             cat hook_out2.txt >> hook_out.txt || true
@@ -238,6 +241,10 @@ jobs:
             logcat_frida.txt
             logcat_att1.txt
             logcat_att2.txt
+            logcat_death_att1.txt
+            logcat_death_att2.txt
+            tombstone_att1.txt
+            tombstone_att2.txt
             hook_out.txt
             dmesg_host.txt
             dmesg_host2.txt

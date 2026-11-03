@@ -6,10 +6,37 @@ Loads default bundles that exist in tools/, then any extras.
 """
 import json
 import os
+import subprocess
 import sys
+import threading
 import time
 
 import frida
+
+
+def dump_death(tag):
+    """Capture logcat + newest tombstone the instant the target dies."""
+    def _d():
+        cmds = [
+            (["sudo", "docker", "exec", "redroid", "/system/bin/sh", "-c",
+              'ls -t /data/tombstones 2>/dev/null | head -3; '
+              't=$(ls -t /data/tombstones 2>/dev/null | head -1); '
+              '[ -n "$t" ] && echo "==== $t ====" && cat "/data/tombstones/$t"'],
+             "tombstone_%s.txt" % tag),
+            (["sudo", "docker", "exec", "redroid", "/system/bin/logcat", "-d", "-v", "time"],
+             "logcat_death_%s.txt" % tag),
+        ]
+        for cmd, out in cmds:
+            try:
+                with open(out, "w", encoding="utf-8", errors="replace") as f:
+                    subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, timeout=60)
+            except Exception as e:
+                try:
+                    with open(out + ".err", "w") as f:
+                        f.write(str(e))
+                except Exception:
+                    pass
+    threading.Thread(target=_d, daemon=True).start()
 
 DEFAULT_SCRIPTS = [
     "tools/hide.js",
@@ -75,7 +102,8 @@ def main():
     pid = dev.spawn(["com.ihuman.pinyin"])
     print("SPAWN", pid, flush=True)
     sess = dev.attach(pid)
-    sess.on("detached", lambda *a: print("DETACHED", a[0], flush=True))
+    death_tag = os.environ.get("DEATH_TAG", "att")
+    sess.on("detached", lambda *a: (print("DETACHED", a[0], flush=True), dump_death(death_tag)))
 
     scripts = []
     for path in scripts_paths:
