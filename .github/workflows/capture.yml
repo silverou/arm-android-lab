@@ -161,21 +161,11 @@ jobs:
           sudo docker cp fs redroid:/data/local/tmp/.logd_helper
           sudo docker cp tools/frida_launch.sh redroid:/data/local/tmp/frida_launch.sh
           sudo docker exec redroid /system/bin/sh -c 'chmod 755 /data/local/tmp/.logd_helper /data/local/tmp/frida_launch.sh'
-          # try adb first: adbd-spawned processes get a complete Android env
-          ADB_FRIDA=""
-          for target in localhost:5555 localhost:5556 "$BRIDGE_IP:5555"; do
-            timeout 6 adb connect "$target" >/dev/null 2>&1 || true
-            st=$(timeout 6 adb -s "$target" get-state 2>/dev/null | tr -d '[:space:]' || true)
-            if [ "$st" = "device" ]; then ADB_FRIDA="$target"; break; fi
-          done
-          echo "ADB_FRIDA=$ADB_FRIDA"
-          if [ -n "$ADB_FRIDA" ]; then
-            adb -s "$ADB_FRIDA" push fs /data/local/tmp/.logd_helper
-            adb -s "$ADB_FRIDA" shell "chmod 755 /data/local/tmp/.logd_helper"
-            adb -s "$ADB_FRIDA" shell "nohup /data/local/tmp/.logd_helper -l 0.0.0.0:27042 >/dev/null 2>&1 &" || true
-          else
-            sudo docker exec -d redroid /system/bin/sh /data/local/tmp/frida_launch.sh
-          fi
+          # root is required for zygote spawn gating; adbd env (proven sufficient) is inherited
+          sudo docker exec -d redroid /system/bin/sh /data/local/tmp/frida_launch.sh
+          sleep 3
+          echo "--- frida-server process ---"
+          sudo docker exec redroid /system/bin/sh -c 'ps -A -o USER,PID,NAME 2>/dev/null | grep -a logd_helper || ps -A | grep -a logd_helper || echo NOT_RUNNING'
           # host-side proof: the port must actually accept connections
           PORT_OK=""
           for i in $(seq 1 15); do
