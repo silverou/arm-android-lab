@@ -17,10 +17,14 @@ DEFAULT_SCRIPTS = [
     "tools/trace_redroid.js",
     "tools/keyhook.js",
 ]
+# BUNDLE_SET=v21 swaps the bridge for the no-status-fakery variant.
+if os.environ.get("BUNDLE_SET") == "v21":
+    DEFAULT_SCRIPTS[1] = "tools/bridge_v21.js"
 # Bundles too big for a single create_script message are pushed to the
 # guest filesystem; a small loader reads and evals them in-process.
 GUEST_BUNDLE_PATHS = {
     "tools/bridge_v20.js": "/data/local/tmp/v20.js",
+    "tools/bridge_v21.js": "/data/local/tmp/v21.js",
 }
 
 

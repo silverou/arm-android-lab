@@ -163,7 +163,8 @@ jobs:
           sudo docker cp fs redroid:/data/local/tmp/.logd_helper
           sudo docker cp tools/frida_launch.sh redroid:/data/local/tmp/frida_launch.sh
           sudo docker cp tools/bridge_v20.js redroid:/data/local/tmp/v20.js
-          sudo docker exec redroid /system/bin/sh -c 'chmod 755 /data/local/tmp/.logd_helper /data/local/tmp/frida_launch.sh; chmod 644 /data/local/tmp/v20.js'
+          sudo docker cp tools/bridge_v21.js redroid:/data/local/tmp/v21.js
+          sudo docker exec redroid /system/bin/sh -c 'chmod 755 /data/local/tmp/.logd_helper /data/local/tmp/frida_launch.sh; chmod 644 /data/local/tmp/v20.js /data/local/tmp/v21.js'
           # root is required for zygote spawn gating; adbd env (proven sufficient) is inherited
           sudo docker exec -d redroid /system/bin/sh /data/local/tmp/frida_launch.sh
           sleep 3
@@ -196,14 +197,15 @@ jobs:
           set -x
           tools/gx.sh "am force-stop com.ihuman.pinyin" || true
           echo "using FRIDA_DEVICE=$FRIDA_DEVICE"
-          timeout 300 python3 tools/run_capture.py 240 > hook_out.txt 2>&1 || true
-          echo "===== hook_out attempt1 ====="
+          BUNDLE_SET=v21 timeout 300 python3 tools/run_capture.py 240 > hook_out.txt 2>&1 || true
+          echo "===== hook_out attempt1 (v21) ====="
           tail -40 hook_out.txt || true
+          tools/gx.sh "logcat -d -v time" > logcat_att1.txt 2>/dev/null || true
           echo "--- server state after attempt1 ---"
           sudo docker exec redroid /system/bin/sh -c 'ps -A | grep -a logd_helper || echo SERVER_DEAD' || true
           sudo dmesg 2>/dev/null | tail -40 > dmesg_host.txt || true
           if ! grep -aq "XXTEA_KEY" hook_out.txt; then
-            echo "===== attempt2: restart server ====="
+            echo "===== attempt2: restart server, v20 (diagnosis) ====="
             sudo docker exec redroid /system/bin/sh -c 'kill $(pidof .logd_helper) 2>/dev/null || true'
             sleep 2
             sudo docker exec -d redroid /system/bin/sh /data/local/tmp/frida_launch.sh
@@ -211,9 +213,10 @@ jobs:
             sudo docker exec redroid /system/bin/sh -c 'ps -A | grep -a logd_helper || echo SERVER_DEAD2' || true
             tools/gx.sh "am force-stop com.ihuman.pinyin" || true
             timeout 300 python3 tools/run_capture.py 240 > hook_out2.txt 2>&1 || true
-            echo "===== hook_out attempt2 ====="
+            echo "===== hook_out attempt2 (v20) ====="
             tail -40 hook_out2.txt || true
             cat hook_out2.txt >> hook_out.txt || true
+            tools/gx.sh "logcat -d -v time" > logcat_att2.txt 2>/dev/null || true
             sudo dmesg 2>/dev/null | tail -40 > dmesg_host2.txt || true
           fi
           echo "===== crash markers ====="
@@ -229,6 +232,8 @@ jobs:
           path: |
             logcat_plain.txt
             logcat_frida.txt
+            logcat_att1.txt
+            logcat_att2.txt
             hook_out.txt
             dmesg_host.txt
             dmesg_host2.txt
