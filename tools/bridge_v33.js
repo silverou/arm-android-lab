@@ -13716,6 +13716,7 @@ std_string_c_str (StdString * self)
       send("sample-err " + e);
     }
     const selfStatus = readSelf("/proc/self/status");
+    const mainPid = Process.id.toString();
     let fakeSelf = selfStatus.replace(/^Name:.*$/m, "Name:	m.ihuman.pinyin").replace(/^TracerPid:.*$/m, "TracerPid:	0").replace(/^NSpgid:.*$/m, "NSpgid:	" + mainPid).replace(/^NSsid:.*$/m, "NSsid:	" + mainPid).replace(/^Threads:.*$/m, "Threads:	" + (totalT - Object.keys(badTids).length).toString());
     const CACHEP = "/data/user/0/com.ihuman.pinyin/cache/";
     const sp = CACHEP + "self_status.txt";
@@ -13723,7 +13724,6 @@ std_string_c_str (StdString * self)
     let fw = FileWriter.$new(sp, false);
     fw.write(fakeSelf, 0, fakeSelf.length);
     fw.close();
-    const mainPid = Process.id.toString();
     const fakeStat = mainPid + " (m.ihuman.pinyin) S " + mainPid + " " + mainPid + " 0 0 -1 4194528 0 0 0 0 0 0 0 0 0 0 " + (totalT - Object.keys(badTids).length) + " 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" + String.fromCharCode(10);
     const sp2 = CACHEP + "self_stat.txt";
     let fw2 = FileWriter.$new(sp2, false);
