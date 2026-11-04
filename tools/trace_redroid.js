@@ -106,7 +106,7 @@ function captureFd(fd, kind) {
   }
 }
 
-var PATH_IDX = { openat: 1, newfstatat: 1 };
+var PATH_IDX = { openat: 1, newfstatat: 1, unlinkat: 1 };
 var CAP_PATHS = { '/proc/self/maps': 'maps', '/proc/self/cmdline': 'cmdline' };
 
 function capKind(p) {
@@ -152,7 +152,7 @@ function hookPath(sym, tag) {
   }
 }
 
-['fopen', 'open', 'openat', 'access', 'stat', 'lstat', 'readlink', 'opendir']
+['fopen', 'open', 'openat', 'access', 'stat', 'lstat', 'readlink', 'opendir', 'unlink', 'unlinkat']
   .forEach(function (s) { hookPath(s, s); });
 
 try {
