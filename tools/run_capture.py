@@ -66,6 +66,8 @@ elif os.environ.get("BUNDLE_SET") == "v29":
     DEFAULT_SCRIPTS[1] = "tools/bridge_v29.js"
 elif os.environ.get("BUNDLE_SET") == "v30":
     DEFAULT_SCRIPTS[1] = "tools/bridge_v30.js"
+elif os.environ.get("BUNDLE_SET") == "v31":
+    DEFAULT_SCRIPTS[1] = "tools/bridge_v31.js"
 # Bundles too big for a single create_script message are pushed to the
 # guest filesystem; a small loader reads and evals them in-process.
 GUEST_BUNDLE_PATHS = {
@@ -79,6 +81,7 @@ GUEST_BUNDLE_PATHS = {
     "tools/bridge_v28.js": "/data/local/tmp/v28.js",
     "tools/bridge_v29.js": "/data/local/tmp/v29.js",
     "tools/bridge_v30.js": "/data/local/tmp/v30.js",
+    "tools/bridge_v31.js": "/data/local/tmp/v31.js",
 }
 
 
