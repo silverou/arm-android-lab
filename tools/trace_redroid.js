@@ -90,6 +90,11 @@ function captureFd(fd, kind) {
       off += Number(r);
       if (out.length > 60000) break;
     }
+    if (kind !== 'maps') {
+      // generic content snapshot (status/stat files the shell consumed)
+      log({ ev: 'cap', k: kind, v: out.slice(0, 800) }, 'cap|' + kind);
+      return;
+    }
     var lines = out.split('\n');
     var hits = [];
     for (var i = 0; i < lines.length && hits.length < 25; i++) {
@@ -104,6 +109,17 @@ function captureFd(fd, kind) {
 var PATH_IDX = { openat: 1, newfstatat: 1 };
 var CAP_PATHS = { '/proc/self/maps': 'maps', '/proc/self/cmdline': 'cmdline' };
 
+function capKind(p) {
+  if (CAP_PATHS[p]) return CAP_PATHS[p];
+  if (p === '/proc/self/status') return 'realst';
+  if (p === '/proc/self/stat') return 'realstf';
+  if (/\/cache\/self_status\.txt$/.test(p)) return 'selfst';
+  if (/\/cache\/self_stat\.txt$/.test(p)) return 'selfstf';
+  if (/\/faketask\/\d+\/status$/.test(p)) return 'tidst';
+  if (/\/faketask\/\d+\/stat$/.test(p)) return 'tidstf';
+  return null;
+}
+
 function hookPath(sym, tag) {
   try {
     var p = Module.getGlobalExportByName(sym);
@@ -114,7 +130,7 @@ function hookPath(sym, tag) {
           var path = a[idx].readCString();
           if (path && path.charCodeAt(0) === 47) {
             this.k = path;
-            this.cap = CAP_PATHS[path] || null;
+            this.cap = capKind(path);
           }
         } catch (e) {}
       },
