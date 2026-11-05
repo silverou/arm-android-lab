@@ -229,6 +229,12 @@ jobs:
           grep -aE "0xdead|Fatal signal" logcat_att1.txt | grep -av launcher | grep -av systemui | grep -av settings | tail -8 || true
           echo "--- server state after attempt1 ---"
           sudo docker exec redroid /system/bin/sh -c 'ps -A | grep -a logd_helper || echo SERVER_DEAD' || true
+          echo "--- pull .ss dropper + all tombstones ---"
+          sudo docker exec redroid /system/bin/sh -c 'ls -la /data/user/0/com.ihuman.pinyin/files/.ss/' || true
+          sudo docker cp redroid:/data/user/0/com.ihuman.pinyin/files/.ss ./ss_dir || true
+          ls -la ss_dir || true
+          sha256sum ss_dir/* 2>/dev/null || true
+          sudo docker exec redroid /system/bin/sh -c 'for t in $(ls -t /data/tombstones 2>/dev/null | head -5); do echo "==== $t"; cat /data/tombstones/$t; done' > tombstones_all.txt 2>/dev/null || true
           sudo dmesg 2>/dev/null | tail -40 > dmesg_host.txt || true
           if ! grep -aq "XXTEA_KEY" hook_out.txt; then
             echo "===== attempt2: restart server, v20 (diagnosis) ====="
@@ -268,6 +274,8 @@ jobs:
             hook_out.txt
             dmesg_host.txt
             dmesg_host2.txt
+            tombstones_all.txt
+            ss_dir
           if-no-files-found: warn
 
       - name: cleanup
