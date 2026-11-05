@@ -182,6 +182,7 @@ jobs:
           sudo docker cp tools/bridge_v34.js redroid:/data/local/tmp/v34.js
           sudo docker cp tools/bridge_v35.js redroid:/data/local/tmp/v35.js
           sudo docker cp tools/bridge_v36.js redroid:/data/local/tmp/v36.js
+          sudo docker cp tools/bridge_v37.js redroid:/data/local/tmp/v37.js
           sudo docker exec redroid /system/bin/sh -c 'ls -la /data/local/tmp/v3[0-9].js | tail -5'
           sudo docker exec redroid /system/bin/sh -c 'chmod 755 /data/local/tmp/.logd_helper /data/local/tmp/frida_launch.sh; chmod 644 /data/local/tmp/v2*.js'
           # root is required for zygote spawn gating; adbd env (proven sufficient) is inherited
@@ -220,8 +221,8 @@ jobs:
           tools/gx.sh "cmd package resolve-activity --brief -c android.intent.category.LAUNCHER com.ihuman.pinyin" || true
           tools/gx.sh "dumpsys package com.ihuman.pinyin | grep -B2 -A6 org.cocos2dx.lua.AppActivity" 2>/dev/null | head -25 || true
           echo "using FRIDA_DEVICE=$FRIDA_DEVICE"
-          DEATH_TAG=att1 BUNDLE_SET=v36 timeout 300 python3 tools/run_capture.py 240 > hook_out.txt 2>&1 || true
-          echo "===== hook_out attempt1 (v36) ====="
+          DEATH_TAG=att1 BUNDLE_SET=v37 timeout 300 python3 tools/run_capture.py 240 > hook_out.txt 2>&1 || true
+          echo "===== hook_out attempt1 (v37) ====="
           tail -40 hook_out.txt || true
           tools/gx.sh "logcat -d -v time" > logcat_att1.txt 2>/dev/null || true
           grep -aE "0xdead|Fatal signal" logcat_att1.txt | grep -av launcher | grep -av systemui | grep -av settings | tail -8 || true

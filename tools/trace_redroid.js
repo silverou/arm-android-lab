@@ -7,6 +7,9 @@
 var seen = {};
 var n = 0;
 var CAP = 700;
+// v37 diagnostics: prove the fopen/openat listeners fire from this script
+var tdbg = { fopen: 0, openat: 0 };
+var tmiss = { fopen: 0, openat: 0 };
 
 function log(o, key) {
   if (seen[key] || n >= CAP) return;
@@ -156,6 +159,10 @@ function hookPath(sym, tag) {
       onEnter: function (a) {
         try {
           var path = a[idx].readCString();
+          if ((tag === 'fopen' || tag === 'openat') && path && tdbg[tag] < 25) {
+            tdbg[tag]++;
+            send({ ev: 'tfe', t: tag, p: path });
+          }
           if (path && path.charCodeAt(0) === 47) {
             this.k = path;
             this.cap = capKind(path);
@@ -163,7 +170,13 @@ function hookPath(sym, tag) {
         } catch (e) {}
       },
       onLeave: function (ret) {
-        if (!this.k) return;
+        if (!this.k) {
+          if ((tag === 'fopen' || tag === 'openat') && tmiss[tag] < 10) {
+            tmiss[tag]++;
+            send({ ev: 'tnk', t: tag });
+          }
+          return;
+        }
         var r = ret.toInt32();
         var ok = tag === 'fopen' ? !ret.isNull() : r >= 0;
         if (this.cap && ok) {
