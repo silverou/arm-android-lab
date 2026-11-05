@@ -132,6 +132,31 @@ def connect(addr, tries=20):
     raise RuntimeError("connect failed: %s" % last)
 
 
+
+def spawn_app(dev):
+    """Spawn with retries; fall back to explicit pkg/Activity when the
+    launcher resolution (getLaunchIntentForPackage) fails."""
+    attempts = [["com.ihuman.pinyin"], ["com.ihuman.pinyin/org.cocos2dx.lua.AppActivity"]]
+    last = None
+    for prog in attempts:
+        for i in range(3):
+            try:
+                pid = dev.spawn(prog)
+                print("SPAWN_OK", prog, pid, flush=True)
+                return pid
+            except Exception as e:
+                last = e
+                print("SPAWN_RETRY", prog, i, str(e)[:220], flush=True)
+                try:
+                    subprocess.run(["sudo", "docker", "exec", "redroid",
+                                    "/system/bin/am", "force-stop", "com.ihuman.pinyin"],
+                                   timeout=30)
+                except Exception as e2:
+                    print("force-stop-err", str(e2)[:120], flush=True)
+                time.sleep(3)
+    raise RuntimeError("spawn failed: %s" % last)
+
+
 def main():
     dur = int(sys.argv[1]) if len(sys.argv) > 1 else 150
     scripts_paths = [p for p in DEFAULT_SCRIPTS if os.path.exists(p)]
@@ -141,7 +166,7 @@ def main():
     print("SCRIPTS", scripts_paths, flush=True)
 
     dev = connect(addr)
-    pid = dev.spawn(["com.ihuman.pinyin"])
+    pid = spawn_app(dev)
     print("SPAWN", pid, flush=True)
     sess = dev.attach(pid)
     death_tag = os.environ.get("DEATH_TAG", "att")
