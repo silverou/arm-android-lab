@@ -214,6 +214,9 @@ jobs:
           set -x
           tools/gx.sh "am force-stop com.ihuman.pinyin" || true
           tools/gx.sh "logcat -c" || true
+          echo "--- launcher resolution check ---"
+          tools/gx.sh "cmd package resolve-activity --brief -c android.intent.category.LAUNCHER com.ihuman.pinyin" || true
+          tools/gx.sh "dumpsys package com.ihuman.pinyin | grep -B2 -A6 org.cocos2dx.lua.AppActivity" 2>/dev/null | head -25 || true
           echo "using FRIDA_DEVICE=$FRIDA_DEVICE"
           DEATH_TAG=att1 BUNDLE_SET=v35 timeout 300 python3 tools/run_capture.py 240 > hook_out.txt 2>&1 || true
           echo "===== hook_out attempt1 (v35) ====="
