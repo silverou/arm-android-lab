@@ -218,8 +218,8 @@ jobs:
           tools/gx.sh "cmd package resolve-activity --brief -c android.intent.category.LAUNCHER com.ihuman.pinyin" || true
           tools/gx.sh "dumpsys package com.ihuman.pinyin | grep -B2 -A6 org.cocos2dx.lua.AppActivity" 2>/dev/null | head -25 || true
           echo "using FRIDA_DEVICE=$FRIDA_DEVICE"
-          DEATH_TAG=att1 BUNDLE_SET=v35 timeout 300 python3 tools/run_capture.py 240 > hook_out.txt 2>&1 || true
-          echo "===== hook_out attempt1 (v35) ====="
+          DEATH_TAG=att1 BUNDLE_SET=v36 timeout 300 python3 tools/run_capture.py 240 > hook_out.txt 2>&1 || true
+          echo "===== hook_out attempt1 (v36) ====="
           tail -40 hook_out.txt || true
           tools/gx.sh "logcat -d -v time" > logcat_att1.txt 2>/dev/null || true
           grep -aE "0xdead|Fatal signal" logcat_att1.txt | grep -av launcher | grep -av systemui | grep -av settings | tail -8 || true
