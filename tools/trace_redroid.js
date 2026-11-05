@@ -64,6 +64,34 @@ try {
   send({ ev: 'status0_err', e: String(e) });
 }
 
+// calibration: dump RAW dirent fields of the REAL /proc/self/task (pre-hooks)
+try {
+  var openD = new NativeFunction(Module.getGlobalExportByName('open'), 'int', ['pointer', 'int', 'int']);
+  var gdD = new NativeFunction(Module.getGlobalExportByName('getdents64'), 'long', ['int', 'pointer', 'long']);
+  var closeD = new NativeFunction(Module.getGlobalExportByName('close'), 'int', ['int']);
+  var fdD = openD(Memory.allocUtf8String('/proc/self/task'), 0x10000, 0);
+  if (fdD >= 0) {
+    var bD = Memory.alloc(8192);
+    var nD = gdD(fdD, bD, 8192);
+    if (nD > 0) {
+      var offD = 0, rowsD = [];
+      while (offD < Number(nD) && rowsD.length < 6) {
+        var inoD = bD.add(offD).readU64();
+        var doffD = bD.add(offD + 8).readU64();
+        var reclenD = bD.add(offD + 16).readU16();
+        var typeD = bD.add(offD + 18).readU8();
+        var nmD = bD.add(offD + 19).readCString();
+        rowsD.push({ ino: inoD.toString(), off: doffD.toString(), t: typeD, n: nmD });
+        offD += reclenD;
+      }
+      send({ ev: 'realdirent', rows: rowsD });
+    }
+    closeD(fdD);
+  }
+} catch (e) {
+  send({ ev: 'realdirent_err', e: String(e) });
+}
+
 var BADMAP = /frida|angle|pastel|qemu|houdini|goldfish|emulator|mumu|nox|vbox|bluestacks|droid4x|tiantian|nemu|microvirt|binderfs|memtrack/i;
 
 function captureFd(fd, kind) {
@@ -106,7 +134,7 @@ function captureFd(fd, kind) {
   }
 }
 
-var PATH_IDX = { openat: 1, newfstatat: 1, unlinkat: 1 };
+var PATH_IDX = { openat: 1, newfstatat: 1, unlinkat: 1, fstatat: 1 };
 var CAP_PATHS = { '/proc/self/maps': 'maps', '/proc/self/cmdline': 'cmdline' };
 
 function capKind(p) {
@@ -152,8 +180,24 @@ function hookPath(sym, tag) {
   }
 }
 
-['fopen', 'open', 'openat', 'access', 'stat', 'lstat', 'readlink', 'opendir', 'unlink', 'unlinkat']
+['fopen', 'open', 'openat', 'access', 'stat', 'lstat', 'readlink', 'opendir', 'unlink', 'unlinkat', 'fstatat']
   .forEach(function (s) { hookPath(s, s); });
+
+// raw syscall visibility: getdents64 (enumeration bypass?) and fstat (dirfd probes)
+try {
+  var gdP = Module.getGlobalExportByName('getdents64');
+  Interceptor.attach(gdP, {
+    onEnter: function (a) { this.fd = a[0].toInt32(); },
+    onLeave: function (r) { log({ ev: 'tr', t: 'getdents64', fd: this.fd, r: r.toInt32() }, 'gd|' + this.fd); }
+  });
+} catch (e) {}
+try {
+  var fsP = Module.getGlobalExportByName('fstat');
+  Interceptor.attach(fsP, {
+    onEnter: function (a) { this.fd = a[0].toInt32(); },
+    onLeave: function (r) { log({ ev: 'tr', t: 'fstat', fd: this.fd, r: r.toInt32() }, 'fs|' + this.fd); }
+  });
+} catch (e) {}
 
 try {
   var pg = Module.getGlobalExportByName('__system_property_get');
