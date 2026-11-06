@@ -231,16 +231,20 @@ jobs:
           echo "--- app liveness after attempt1 ---"
           tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
           tools/gx.sh "dumpsys activity activities | grep -a -B2 -A6 ihuman" 2>/dev/null | head -30 || true
+          tools/gx.sh "screencap -p /data/local/tmp/sc1.png" || true
+          sudo docker exec redroid /system/bin/cat /data/local/tmp/sc1.png > sc1.png 2>/dev/null || true
           sudo docker exec redroid /system/bin/sh -c 'pkill -f lc1.log || true' || true
-          sudo docker cp redroid:/data/local/tmp/lc1.log lc1.txt 2>/dev/null || true
-          ls -la lc1.txt 2>/dev/null || true
+          sudo docker exec redroid /system/bin/cat /data/local/tmp/lc1.log > lc1.txt 2>/dev/null || true
+          ls -la lc1.txt sc1.png 2>/dev/null || true
           tools/gx.sh "logcat -d -v time" > logcat_att1.txt 2>/dev/null || true
           grep -aE "0xdead|Fatal signal" logcat_att1.txt | grep -av launcher | grep -av systemui | grep -av settings | tail -8 || true
           echo "--- server state after attempt1 ---"
           sudo docker exec redroid /system/bin/sh -c 'ps -A | grep -a logd_helper || echo SERVER_DEAD' || true
           echo "--- pull .ss dropper + all tombstones ---"
           sudo docker exec redroid /system/bin/sh -c 'ls -la /data/user/0/com.ihuman.pinyin/files/.ss/' || true
-          sudo docker cp redroid:/data/user/0/com.ihuman.pinyin/files/.ss ./ss_dir || true
+          mkdir -p ss_dir
+          sudo docker exec redroid /system/bin/sh -c 'ls /data/user/0/com.ihuman.pinyin/files/.ss/ 2>/dev/null' > .ss_ls.txt || true
+          while read f; do [ -n "$f" ] && sudo docker exec redroid /system/bin/cat "/data/user/0/com.ihuman.pinyin/files/.ss/$f" > "ss_dir/$f" 2>/dev/null || true; done < .ss_ls.txt
           ls -la ss_dir || true
           sha256sum ss_dir/* 2>/dev/null || true
           sudo docker exec redroid /system/bin/sh -c 'for t in $(ls -t /data/tombstones 2>/dev/null | head -5); do echo "==== $t"; cat /data/tombstones/$t; done' > tombstones_all.txt 2>/dev/null || true
@@ -262,8 +266,11 @@ jobs:
             cat hook_out2.txt >> hook_out.txt || true
             echo "--- app liveness after attempt2 ---"
             tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
+            tools/gx.sh "screencap -p /data/local/tmp/sc2.png" || true
+            sudo docker exec redroid /system/bin/cat /data/local/tmp/sc2.png > sc2.png 2>/dev/null || true
             sudo docker exec redroid /system/bin/sh -c 'pkill -f lc2.log || true' || true
-            sudo docker cp redroid:/data/local/tmp/lc2.log lc2.txt 2>/dev/null || true
+            sudo docker exec redroid /system/bin/cat /data/local/tmp/lc2.log > lc2.txt 2>/dev/null || true
+            ls -la lc2.txt sc2.png 2>/dev/null || true
             tools/gx.sh "logcat -d -v time" > logcat_att2.txt 2>/dev/null || true
             sudo dmesg 2>/dev/null | tail -40 > dmesg_host2.txt || true
           fi
@@ -293,6 +300,8 @@ jobs:
             ss_dir
             lc1.txt
             lc2.txt
+            sc1.png
+            sc2.png
           if-no-files-found: warn
 
       - name: cleanup
