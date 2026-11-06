@@ -11,14 +11,28 @@
  */
 function emit(o) { send(o); }
 
+var SYM = '_ZN7cocos2d8LuaStack14setHongenKAndSEPKciS2_i';
 function hookKey() {
   var exp = null;
   try {
-    exp = Module.getGlobalExportByName('_ZN7cocos2d8LuaStack14setHongenKAndSEPKciS2_i');
+    exp = Module.getGlobalExportByName(SYM);
   } catch (e) {
     exp = null;
   }
   if (exp === null || exp.isNull()) {
+    // v50: frida17 getGlobalExportByName misses exports of late-loaded
+    // modules (proven with AAsset_close in libandroid) — walk modules too.
+    try {
+      var mods = Process.enumerateModules();
+      for (var i = 0; i < mods.length; i++) {
+        try {
+          var e2 = mods[i].findExportByName(SYM);
+          if (e2 && !e2.isNull()) { exp = e2; send({ ev: 'keyhook_walk', mod: mods[i].name }); break; }
+        } catch (e3) {}
+      }
+    } catch (e4) {}
+  }
+  if (exp === null || exp.isNull() || exp.isNull()) {
     // module may not be loaded yet; retry later
     return false;
   }
@@ -58,7 +72,11 @@ var iv = setInterval(function () {
   var done = false;
   try { done = hookKey(); } catch (e) { emit({ ev: 'poll_err', e: String(e) }); }
   if (done) { clearInterval(iv); return; }
-  if (tries % 25 === 0) emit({ ev: 'kh-hb', t: tries });
+  if (tries % 25 === 0) {
+    var found = false;
+    try { var m2 = Module.getGlobalExportByName(SYM); found = !!(m2 && !m2.isNull()); } catch (e) {}
+    emit({ ev: 'kh-hb', t: tries, found: found ? 1 : 0 });
+  }
   if (tries > 600) { clearInterval(iv); emit({ ev: 'keyhook_giveup' }); }
 }, 300);
 
