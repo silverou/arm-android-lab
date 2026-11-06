@@ -223,9 +223,17 @@ jobs:
           tools/gx.sh "cmd package resolve-activity --brief -c android.intent.category.LAUNCHER com.ihuman.pinyin" || true
           tools/gx.sh "dumpsys package com.ihuman.pinyin | grep -B2 -A6 org.cocos2dx.lua.AppActivity" 2>/dev/null | head -25 || true
           echo "using FRIDA_DEVICE=$FRIDA_DEVICE"
+          sudo docker exec redroid /system/bin/sh -c 'rm -f /data/local/tmp/lc1.log' || true
+          sudo docker exec -d redroid /system/bin/logcat -f /data/local/tmp/lc1.log -v time || true
           DEATH_TAG=att1 BUNDLE_SET=v39 timeout 300 python3 tools/run_capture.py 240 > hook_out.txt 2>&1 || true
           echo "===== hook_out attempt1 (v39) ====="
           tail -40 hook_out.txt || true
+          echo "--- app liveness after attempt1 ---"
+          tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
+          tools/gx.sh "dumpsys activity activities | grep -a -B2 -A6 ihuman" 2>/dev/null | head -30 || true
+          sudo docker exec redroid /system/bin/sh -c 'pkill -f lc1.log || true' || true
+          sudo docker cp redroid:/data/local/tmp/lc1.log lc1.txt 2>/dev/null || true
+          ls -la lc1.txt 2>/dev/null || true
           tools/gx.sh "logcat -d -v time" > logcat_att1.txt 2>/dev/null || true
           grep -aE "0xdead|Fatal signal" logcat_att1.txt | grep -av launcher | grep -av systemui | grep -av settings | tail -8 || true
           echo "--- server state after attempt1 ---"
@@ -238,7 +246,7 @@ jobs:
           sudo docker exec redroid /system/bin/sh -c 'for t in $(ls -t /data/tombstones 2>/dev/null | head -5); do echo "==== $t"; cat /data/tombstones/$t; done' > tombstones_all.txt 2>/dev/null || true
           sudo dmesg 2>/dev/null | tail -40 > dmesg_host.txt || true
           if ! grep -aq "XXTEA_KEY" hook_out.txt; then
-            echo "===== attempt2: restart server, v20 (diagnosis) ====="
+            echo "===== attempt2: restart server, v39 retest ====="
             sudo docker exec redroid /system/bin/sh -c 'kill $(pidof .logd_helper) 2>/dev/null || true'
             sleep 2
             sudo docker exec -d redroid /system/bin/sh /data/local/tmp/frida_launch.sh
@@ -246,10 +254,16 @@ jobs:
             sudo docker exec redroid /system/bin/sh -c 'ps -A | grep -a logd_helper || echo SERVER_DEAD2' || true
             tools/gx.sh "am force-stop com.ihuman.pinyin" || true
             tools/gx.sh "logcat -c" || true
-            DEATH_TAG=att2 timeout 300 python3 tools/run_capture.py 240 > hook_out2.txt 2>&1 || true
-            echo "===== hook_out attempt2 (v20) ====="
+            sudo docker exec redroid /system/bin/sh -c 'rm -f /data/local/tmp/lc2.log' || true
+            sudo docker exec -d redroid /system/bin/logcat -f /data/local/tmp/lc2.log -v time || true
+            DEATH_TAG=att2 BUNDLE_SET=v39 timeout 300 python3 tools/run_capture.py 240 > hook_out2.txt 2>&1 || true
+            echo "===== hook_out attempt2 (v39 retest) ====="
             tail -40 hook_out2.txt || true
             cat hook_out2.txt >> hook_out.txt || true
+            echo "--- app liveness after attempt2 ---"
+            tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
+            sudo docker exec redroid /system/bin/sh -c 'pkill -f lc2.log || true' || true
+            sudo docker cp redroid:/data/local/tmp/lc2.log lc2.txt 2>/dev/null || true
             tools/gx.sh "logcat -d -v time" > logcat_att2.txt 2>/dev/null || true
             sudo dmesg 2>/dev/null | tail -40 > dmesg_host2.txt || true
           fi
@@ -277,6 +291,8 @@ jobs:
             dmesg_host2.txt
             tombstones_all.txt
             ss_dir
+            lc1.txt
+            lc2.txt
           if-no-files-found: warn
 
       - name: cleanup

@@ -212,6 +212,22 @@ try {
   });
 } catch (e) {}
 
+// dlopen observability (v40): which libs actually load during the run
+try {
+  var dlN = 0;
+  ['android_dlopen_ext', 'dlopen', '__loader_dlopen', '__loader_android_dlopen_ext'].forEach(function (sym) {
+    try {
+      var p = Module.getGlobalExportByName(sym);
+      Interceptor.attach(p, {
+        onEnter: function (a) { try { this.p = a[0].readCString(); } catch (e) { this.p = ''; } },
+        onLeave: function (r) {
+          if (this.p && dlN < 80) { dlN++; send({ ev: 'dl', s: sym, p: this.p, r: r.toInt32() }); }
+        }
+      });
+    } catch (e) {}
+  });
+} catch (e) {}
+
 try {
   var pg = Module.getGlobalExportByName('__system_property_get');
   Interceptor.attach(pg, {

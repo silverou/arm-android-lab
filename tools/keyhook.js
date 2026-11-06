@@ -58,21 +58,25 @@ var iv = setInterval(function () {
   var done = false;
   try { done = hookKey(); } catch (e) { emit({ ev: 'poll_err', e: String(e) }); }
   if (done) { clearInterval(iv); return; }
+  if (tries % 25 === 0) emit({ ev: 'kh-hb', t: tries });
   if (tries > 600) { clearInterval(iv); emit({ ev: 'keyhook_giveup' }); }
 }, 300);
 
-// also watch dlopen so we can hook as soon as the lib appears
-try {
-  var dl = Module.getGlobalExportByName('android_dlopen_ext');
-  Interceptor.attach(dl, {
-    onEnter: function (a) { try { this.p = a[0].readCString(); } catch (e) { this.p = ''; } },
-    onLeave: function () {
-      if (this.p && this.p.indexOf('libcocos2dlua') >= 0) {
-        emit({ ev: 'cocos_loaded', path: this.p });
-        setTimeout(function () { hookKey(); }, 50);
+// also watch every dlopen entry point so we catch the lib however it loads
+['android_dlopen_ext', 'dlopen', '__loader_dlopen', '__loader_android_dlopen_ext'].forEach(function (sym) {
+  try {
+    var dl = Module.getGlobalExportByName(sym);
+    Interceptor.attach(dl, {
+      onEnter: function (a) { try { this.p = a[0].readCString(); } catch (e) { this.p = ''; } },
+      onLeave: function () {
+        if (this.p && this.p.indexOf('libcocos2dlua') >= 0) {
+          emit({ ev: 'cocos_loaded', path: this.p });
+          setTimeout(function () { hookKey(); }, 50);
+        }
       }
-    }
-  });
-} catch (e) { emit({ ev: 'dlopen_hook_err', e: String(e) }); }
+    });
+    emit({ ev: 'dlwatch_ok', sym: sym });
+  } catch (e) { emit({ ev: 'dlwatch_err', sym: sym, e: String(e) }); }
+});
 
 emit({ ev: 'keyhook_ready' });
