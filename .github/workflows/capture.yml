@@ -67,13 +67,7 @@ jobs:
             echo "gsm.version.baseband=$(getprop gsm.version.baseband)"
             echo "cmdline=$(cat /proc/cmdline)"
           ' || true
-          echo "--- remediation: mirror gpu_setup_guest props + restart SF ---"
-          sudo docker exec redroid /system/bin/sh -c '
-            setprop ro.hardware.egl angle || true
-            setprop ro.hardware.gralloc redroid || true
-            setprop ro.hardware.vulkan pastel || true
-            setprop ctl.restart surfaceflinger || true
-          ' || true
+          echo "--- v52: no SF restart (v51 evidence: EGL_BAD_SURFACE system-wide after our restart) ---"
           sleep 12
           GUEST=0
           GUEST_MODE=docker
@@ -143,9 +137,6 @@ jobs:
       - name: plain launch probe
         run: |
           set -x
-          tools/gx.sh "pm disable com.android.launcher3" || true
-          tools/gx.sh "pm disable com.android.systemui" || true
-          tools/gx.sh "pm disable com.android.settings" || true
           tools/gx.sh "pm list packages -d" || true
           echo "--- wake/unlock/stayon (v51: hwui aborts on no-surface when display is off) ---"
           tools/gx.sh "input keyevent 224" || true
