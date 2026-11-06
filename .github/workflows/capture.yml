@@ -193,6 +193,7 @@ jobs:
           sudo docker cp tools/bridge_v47.js redroid:/data/local/tmp/v47.js
           sudo docker cp tools/bridge_v48.js redroid:/data/local/tmp/v48.js
           sudo docker cp tools/bridge_v49.js redroid:/data/local/tmp/v49.js
+          sudo docker cp tools/bridge_v50.js redroid:/data/local/tmp/v50.js
           sudo docker exec redroid /system/bin/sh -c 'ls -la /data/local/tmp/v3[0-9].js | tail -5'
           sudo docker exec redroid /system/bin/sh -c 'chmod 755 /data/local/tmp/.logd_helper /data/local/tmp/frida_launch.sh; chmod 644 /data/local/tmp/v2*.js'
           # root is required for zygote spawn gating; adbd env (proven sufficient) is inherited
@@ -233,8 +234,8 @@ jobs:
           echo "using FRIDA_DEVICE=$FRIDA_DEVICE"
           sudo docker exec redroid /system/bin/sh -c 'rm -f /data/local/tmp/lc1.log' || true
           sudo docker exec -d redroid /system/bin/logcat -f /data/local/tmp/lc1.log -v time || true
-          DEATH_TAG=att1 BUNDLE_SET=v49 timeout 300 python3 tools/run_capture.py 240 > hook_out.txt 2>&1 || true
-          echo "===== hook_out attempt1 (v49) ====="
+          DEATH_TAG=att1 BUNDLE_SET=v50 timeout 300 python3 tools/run_capture.py 240 > hook_out.txt 2>&1 || true
+          echo "===== hook_out attempt1 (v50) ====="
           tail -40 hook_out.txt || true
           echo "--- app liveness after attempt1 ---"
           tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
@@ -268,8 +269,8 @@ jobs:
             tools/gx.sh "logcat -c" || true
             sudo docker exec redroid /system/bin/sh -c 'rm -f /data/local/tmp/lc2.log' || true
             sudo docker exec -d redroid /system/bin/logcat -f /data/local/tmp/lc2.log -v time || true
-            DEATH_TAG=att2 BUNDLE_SET=v49 timeout 300 python3 tools/run_capture.py 240 > hook_out2.txt 2>&1 || true
-            echo "===== hook_out attempt2 (v49) ====="
+            DEATH_TAG=att2 BUNDLE_SET=v50 timeout 300 python3 tools/run_capture.py 240 > hook_out2.txt 2>&1 || true
+            echo "===== hook_out attempt2 (v50) ====="
             tail -40 hook_out2.txt || true
             cat hook_out2.txt >> hook_out.txt || true
             echo "--- app liveness after attempt2 ---"
