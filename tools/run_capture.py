@@ -212,7 +212,19 @@ def main():
     print("SPAWN", pid, flush=True)
     sess = dev.attach(pid)
     death_tag = os.environ.get("DEATH_TAG", "att")
-    sess.on("detached", lambda *a: (print("DETACHED", a[0], flush=True), dump_death(death_tag)))
+    def on_detached(reason, crash=None):
+        print("DETACHED", reason, flush=True)
+        if crash is not None:
+            try:
+                rep = getattr(crash, "report", None)
+                if rep:
+                    print("CRASHREPORT", rep, flush=True)
+                else:
+                    print("CRASHREPORT-EMPTY", repr(crash), flush=True)
+            except Exception as e:
+                print("CRASHREPORT-ERR", str(e)[:200], flush=True)
+        dump_death(death_tag)
+    sess.on("detached", on_detached)
 
     scripts = []
     for path in scripts_paths:
