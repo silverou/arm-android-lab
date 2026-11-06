@@ -147,6 +147,12 @@ jobs:
           tools/gx.sh "pm disable com.android.systemui" || true
           tools/gx.sh "pm disable com.android.settings" || true
           tools/gx.sh "pm list packages -d" || true
+          echo "--- wake/unlock/stayon (v51: hwui aborts on no-surface when display is off) ---"
+          tools/gx.sh "input keyevent 224" || true
+          tools/gx.sh "wm dismiss-keyguard" || true
+          tools/gx.sh "settings put system screen_off_timeout 2147483647" || true
+          tools/gx.sh "svc power stayon true" || true
+          tools/gx.sh "dumpsys power | grep -aE 'mWakefulness|Display Power'" | head -6 || true
           tools/gx.sh "logcat -c" || true
           tools/gx.sh "am start -n com.ihuman.pinyin/org.cocos2dx.lua.AppActivity" || true
           sleep 45
@@ -227,6 +233,11 @@ jobs:
         run: |
           set -x
           tools/gx.sh "am force-stop com.ihuman.pinyin" || true
+          echo "--- wake/unlock/stayon (v51) ---"
+          tools/gx.sh "input keyevent 224" || true
+          tools/gx.sh "wm dismiss-keyguard" || true
+          tools/gx.sh "svc power stayon true" || true
+          tools/gx.sh "dumpsys power | grep -aE 'mWakefulness|Display Power'" | head -6 || true
           tools/gx.sh "logcat -c" || true
           echo "--- launcher resolution check ---"
           tools/gx.sh "cmd package resolve-activity --brief -c android.intent.category.LAUNCHER com.ihuman.pinyin" || true
