@@ -74,14 +74,17 @@ function scanExports() {
     var mods = Process.enumerateModules();
     var sawCocos = false;
     var hits = [];
+    var KW = /xxtea|hongen|manager|downloader|manifest|download|resurl|remoteurl/i;
     for (var i = 0; i < mods.length; i++) {
-      if (mods[i].name.indexOf('cocos') < 0) continue;
-      sawCocos = true;
+      var mname = mods[i].name || '';
+      var appLib = mname.indexOf('cocos') >= 0 || mname.indexOf('ihuman') >= 0 || mname.indexOf('hpyr') >= 0 || mname.indexOf('ihcommon') >= 0 || mname.indexOf('msaoai') >= 0;
+      if (mname.indexOf('cocos') >= 0) sawCocos = true;
+      if (!appLib) continue;
       try {
         var sy = mods[i].enumerateSymbols();
         for (var j = 0; j < sy.length; j++) {
           var nm = sy[j].name || '';
-          if (/xxtea|hongen|sign|tea/i.test(nm) && hits.length < 80) hits.push(nm);
+          if (KW.test(nm) && hits.length < 180) hits.push(mname.split('.')[0] + '|' + nm);
         }
       } catch (e0) {}
     }
@@ -109,7 +112,8 @@ function armXxtea() {
   function resolve(name) {
     try { var a0 = Module.getGlobalExportByName(name); if (a0 && !a0.isNull()) return a0; } catch (e) {}
     for (var i = 0; i < mods.length; i++) {
-      if (mods[i].name.indexOf('cocos') < 0) continue;
+      var mn2 = mods[i].name || '';
+      if (mn2.indexOf('cocos') < 0 && mn2.indexOf('ihuman') < 0 && mn2.indexOf('hpyr') < 0 && mn2.indexOf('ihcommon') < 0) continue;
       try { var e1 = mods[i].findExportByName(name); if (e1 && !e1.isNull()) return e1; } catch (e2) {}
     }
     return null;
