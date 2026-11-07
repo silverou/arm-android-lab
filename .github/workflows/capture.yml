@@ -197,6 +197,7 @@ jobs:
           sudo docker cp tools/bridge_v58.js redroid:/data/local/tmp/v58.js
           sudo docker cp tools/bridge_v59.js redroid:/data/local/tmp/v59.js
           sudo docker cp tools/bridge_v60.js redroid:/data/local/tmp/v60.js
+          sudo docker cp tools/bridge_v61.js redroid:/data/local/tmp/v61.js
           sudo docker exec redroid /system/bin/sh -c 'ls -la /data/local/tmp/v3[0-9].js | tail -5'
           sudo docker exec redroid /system/bin/sh -c 'chmod 755 /data/local/tmp/.logd_helper /data/local/tmp/frida_launch.sh; chmod 644 /data/local/tmp/v2*.js'
           # root is required for zygote spawn gating; adbd env (proven sufficient) is inherited
@@ -252,9 +253,9 @@ jobs:
               sleep 1
             done ) &
           TAPPER=$!
-          DEATH_TAG=att1 BUNDLE_SET=v60 timeout 300 python3 tools/run_capture.py 240 > hook_out.txt 2>&1 || true
+          DEATH_TAG=att1 BUNDLE_SET=v61 timeout 300 python3 tools/run_capture.py 240 > hook_out.txt 2>&1 || true
           kill $TAPPER 2>/dev/null || true
-          echo "===== hook_out attempt1 (v60) ====="
+          echo "===== hook_out attempt1 (v61) ====="
           tail -40 hook_out.txt || true
           echo "--- app liveness after attempt1 ---"
           tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
@@ -297,9 +298,9 @@ jobs:
                 sleep 1
               done ) &
             TAPPER=$!
-            DEATH_TAG=att2 BUNDLE_SET=v60 timeout 300 python3 tools/run_capture.py 240 > hook_out2.txt 2>&1 || true
+            DEATH_TAG=att2 BUNDLE_SET=v61 timeout 300 python3 tools/run_capture.py 240 > hook_out2.txt 2>&1 || true
             kill $TAPPER 2>/dev/null || true
-            echo "===== hook_out attempt2 (v60) ====="
+            echo "===== hook_out attempt2 (v61) ====="
             tail -40 hook_out2.txt || true
             cat hook_out2.txt >> hook_out.txt || true
             echo "--- app liveness after attempt2 ---"
