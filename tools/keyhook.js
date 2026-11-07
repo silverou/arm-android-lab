@@ -91,6 +91,85 @@ function scanExports() {
   } catch (e) {}
 }
 
+// v71: hook the REAL xxtea surface (names discovered via export scan):
+//   _Z13xxtea_decryptPhjS_jPj  (data,len,key,&keylen)
+//   _ZN7cocos2d5extra6Crypto15encryptXXTEALuaEPKciS3_i (key,keyLen,sign,signLen)
+//   _ZN7cocos2d8LuaStack22cleanupXXTEAKeyAndSignEv
+var xtArmed = false;
+function armXxtea() {
+  if (xtArmed) return;
+  var SYMS = [
+    ['_Z13xxtea_decryptPhjS_jPj', 'dec'],
+    ['_ZN7cocos2d5extra6Crypto15encryptXXTEALuaEPKciS3_i', 'enc'],
+    ['_ZN7cocos2d8LuaStack22cleanupXXTEAKeyAndSignEv', 'clean']
+  ];
+  var found = [];
+  var mods = [];
+  try { mods = Process.enumerateModules(); } catch (e) {}
+  function resolve(name) {
+    try { var a0 = Module.getGlobalExportByName(name); if (a0 && !a0.isNull()) return a0; } catch (e) {}
+    for (var i = 0; i < mods.length; i++) {
+      if (mods[i].name.indexOf('cocos') < 0) continue;
+      try { var e1 = mods[i].findExportByName(name); if (e1 && !e1.isNull()) return e1; } catch (e2) {}
+    }
+    return null;
+  }
+  SYMS.forEach(function (pair) {
+    var addr = resolve(pair[0]);
+    if (!addr) return;
+    found.push(pair[1]);
+    if (pair[1] === 'dec') {
+      var dn = 0;
+      Interceptor.attach(addr, {
+        onEnter: function (a) {
+          try {
+            if (dn >= 30) return;
+            dn++;
+            var len = a[1].toInt32();
+            var kp = a[2];
+            var klp = a[3];
+            var kl = 16;
+            try { if (!klp.isNull()) kl = klp.readU64().toNumber(); } catch (e) {}
+            if (kl <= 0 || kl > 64) kl = 16;
+            var ku = new Uint8Array(kp.readByteArray(kl));
+            var kh = Array.from(ku).map(function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+            emit({ ev: 'XT-DEC', keyHex: kh, keyLen: kl, dataLen: len });
+          } catch (e3) { emit({ ev: 'XT-DEC-err', e: String(e3) }); }
+        }
+      });
+    } else if (pair[1] === 'enc') {
+      var en = 0;
+      Interceptor.attach(addr, {
+        onEnter: function (a) {
+          try {
+            if (en >= 30) return;
+            en++;
+            var keyLen = a[1].toInt32();
+            var signLen = a[3].toInt32();
+            var key = '', sign = '', keyHex = '';
+            if (keyLen > 0 && keyLen < 4096) {
+              var ku = new Uint8Array(a[0].readByteArray(keyLen));
+              for (var i = 0; i < ku.length; i++) key += String.fromCharCode(ku[i]);
+              keyHex = Array.from(ku).map(function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+            }
+            if (signLen > 0 && signLen < 4096) {
+              var su = new Uint8Array(a[2].readByteArray(signLen));
+              for (var j = 0; j < su.length; j++) sign += String.fromCharCode(su[j]);
+            }
+            emit({ ev: 'XXTEA_KEY', via: 'encryptXXTEALua', key: key, keyLen: keyLen, sign: sign, signLen: signLen, keyHex: keyHex });
+          } catch (e4) { emit({ ev: 'XT-ENC-err', e: String(e4) }); }
+        }
+      });
+    } else {
+      var cn2 = 0;
+      Interceptor.attach(addr, {
+        onEnter: function () { if (cn2 < 10) { cn2++; emit({ ev: 'XT-CLEAN' }); } }
+      });
+    }
+  });
+  if (found.length) { xtArmed = true; emit({ ev: 'xt-armed', w: found }); }
+}
+
 // v67: after cocos is located, also attach the libcurl URL logger
 var curlArmed = false;
 function armCurl() {
@@ -132,6 +211,7 @@ var iv = setInterval(function () {
   try { done = hookKey(); } catch (e) { emit({ ev: 'poll_err', e: String(e) }); }
   armCurl();
   scanExports();
+  armXxtea();
   if (done) { clearInterval(iv); return; }
   if (tries % 25 === 0) {
     var found = false;
