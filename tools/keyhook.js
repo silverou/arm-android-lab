@@ -65,6 +65,29 @@ function hookKey() {
   return true;
 }
 
+// v68: report every xxtea/hongen/sign-ish export of cocos to find the REAL
+// key setter (setHongenKAndS is exported but apparently never called).
+var expScanned = false;
+function scanExports() {
+  if (expScanned) return;
+  try {
+    var mods = Process.enumerateModules();
+    var hits = [];
+    for (var i = 0; i < mods.length; i++) {
+      if (mods[i].name.indexOf('cocos') < 0) continue;
+      try {
+        var sy = mods[i].enumerateSymbols();
+        for (var j = 0; j < sy.length; j++) {
+          var nm = sy[j].name || '';
+          if (/xxtea|hongen|sign|tea/i.test(nm) && hits.length < 80) hits.push(nm);
+        }
+      } catch (e0) {}
+    }
+    if (hits.length) emit({ ev: 'cocos-syms', n: hits });
+    expScanned = true;
+  } catch (e) {}
+}
+
 // v67: after cocos is located, also attach the libcurl URL logger
 var curlArmed = false;
 function armCurl() {
@@ -106,6 +129,7 @@ var iv = setInterval(function () {
   try { done = hookKey(); } catch (e) { emit({ ev: 'poll_err', e: String(e) }); }
   if (done) { clearInterval(iv); return; }
   armCurl();
+  scanExports();
   if (tries % 25 === 0) {
     var found = false;
     try { var m2 = Module.getGlobalExportByName(SYM); found = !!(m2 && !m2.isNull()); } catch (e) {}
