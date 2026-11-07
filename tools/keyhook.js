@@ -130,9 +130,9 @@ var iv = setInterval(function () {
   tries++;
   var done = false;
   try { done = hookKey(); } catch (e) { emit({ ev: 'poll_err', e: String(e) }); }
-  if (done) { clearInterval(iv); return; }
   armCurl();
   scanExports();
+  if (done) { clearInterval(iv); return; }
   if (tries % 25 === 0) {
     var found = false;
     try { var m2 = Module.getGlobalExportByName(SYM); found = !!(m2 && !m2.isNull()); } catch (e) {}
