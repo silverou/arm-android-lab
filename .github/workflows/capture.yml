@@ -248,20 +248,22 @@ jobs:
           echo "using FRIDA_DEVICE=$FRIDA_DEVICE"
           sudo docker exec redroid /system/bin/sh -c 'rm -f /data/local/tmp/lc1.log' || true
           sudo docker exec -d redroid /system/bin/logcat -f /data/local/tmp/lc1.log -v time || true
-          echo "--- v53 dialog tapper: fullscreen hint GOT-IT + privacy 同意 ---"
-          ( for i in $(seq 1 70); do
+          echo "--- v68 tapper: hint+consent+close for first ~20s only ---"
+          ( for i in $(seq 1 5); do
               tools/gx.sh "input tap 1108 402" >/dev/null 2>&1 || true
               sleep 1
               tools/gx.sh "input tap 592 576" >/dev/null 2>&1 || true
               sleep 1
               tools/gx.sh "input tap 1188 76" >/dev/null 2>&1 || true
-              sleep 1
-              tools/gx.sh "input tap 640 640" >/dev/null 2>&1 || true
-              sleep 1
+              sleep 2
             done ) &
           TAPPER=$!
+          echo "--- host tcpdump during attempt1 (dns+sni) ---"
+          sudo tcpdump -i any -nn -l 'udp port 53 or tcp port 443' > tcp1.txt 2>/dev/null &
+          TCPD=$!
           DEATH_TAG=att1 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 > hook_out.txt 2>&1 || true
           kill $TAPPER 2>/dev/null || true
+          kill $TCPD 2>/dev/null || true
           echo "===== hook_out attempt1 (v66) ====="
           tail -40 hook_out.txt || true
           echo "--- app liveness after attempt1 ---"
@@ -348,6 +350,7 @@ jobs:
             ss_dir
             lc1.txt
             lc2.txt
+            tcp1.txt
             sc1.png
             sc2.png
           if-no-files-found: warn
