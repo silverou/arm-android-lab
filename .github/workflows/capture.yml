@@ -232,6 +232,36 @@ jobs:
           python3 -m pip install -q --break-system-packages frida==17.24.3
           echo "frida ready"
 
+      - name: mitm setup (guest-wide TLS capture)
+        run: |
+          set -x
+          python3 -m pip install -q --break-system-packages mitmproxy >/dev/null 2>&1 || true
+          python3 -c "import mitmproxy; print('mitmproxy', mitmproxy.__version__)"
+          rm -rf /tmp/mitm; mkdir -p /tmp/mitm
+          nohup mitmdump -p 8080 --set confdir=/tmp/mitm -w /tmp/flows.mitm --listen-host 0.0.0.0 >/tmp/mitmdump.log 2>&1 &
+          MITMPID=$!
+          echo "mitm started pid=$MITMPID"
+          for i in $(seq 1 20); do [ -f /tmp/mitm/mitmproxy-ca-cert.pem ] && break; sleep 1; done
+          ls -la /tmp/mitm/ || true
+          HASH=$(openssl x509 -inform PEM -subject_hash_old -in /tmp/mitm/mitmproxy-ca-cert.pem 2>/dev/null | head -1)
+          echo "ca hash=$HASH"
+          sudo docker cp /tmp/mitm/mitmproxy-ca-cert.pem redroid:/data/local/tmp/mca.pem || true
+          sudo docker exec -e CH="$HASH" redroid /system/bin/sh -c '
+            rm -rf /data/local/tmp/cacerts
+            cp -r /system/etc/security/cacerts /data/local/tmp/cacerts
+            cp /data/local/tmp/mca.pem /data/local/tmp/cacerts/$CH.0
+            chmod 644 /data/local/tmp/cacerts/$CH.0
+            chown root:root /data/local/tmp/cacerts/$CH.0
+            mount --bind /data/local/tmp/cacerts /system/etc/security/cacerts
+            ls /system/etc/security/cacerts | wc -l
+            ls /system/etc/security/cacerts | grep -i "$CH" || true
+          ' || true
+          HOSTIP=$(ip -4 route show default | awk '{print $3; exit}')
+          echo "hostip=$HOSTIP"
+          tools/gx.sh "settings put global http_proxy $HOSTIP:8080" || true
+          tools/gx.sh "settings get global http_proxy" || true
+          echo "MITMPID=$MITMPID" >> "$GITHUB_ENV"
+
       - name: frida spawn capture
         run: |
           set -x
@@ -261,9 +291,12 @@ jobs:
           echo "--- host tcpdump during attempt1 (dns+sni) ---"
           sudo tcpdump -i any -nn -l 'udp port 53 or tcp port 443' > tcp1.txt 2>/dev/null &
           TCPD=$!
-          DEATH_TAG=att1 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 > hook_out.txt 2>&1 || true
+          DEATH_TAG=att1 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin.js > hook_out.txt 2>&1 || true
           kill $TAPPER 2>/dev/null || true
           kill $TCPD 2>/dev/null || true
+          echo "--- mitm flows dump ---"
+          python3 tools/flows_dump.py || true
+          head -60 flows.txt 2>/dev/null || true
           echo "===== hook_out attempt1 (v66) ====="
           tail -40 hook_out.txt || true
           echo "--- app liveness after attempt1 ---"
@@ -309,7 +342,7 @@ jobs:
                 sleep 1
               done ) &
             TAPPER=$!
-            DEATH_TAG=att2 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 > hook_out2.txt 2>&1 || true
+            DEATH_TAG=att2 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin.js > hook_out2.txt 2>&1 || true
             kill $TAPPER 2>/dev/null || true
             echo "===== hook_out attempt2 (v66) ====="
             tail -40 hook_out2.txt || true
@@ -351,6 +384,7 @@ jobs:
             lc1.txt
             lc2.txt
             tcp1.txt
+            flows.txt
             sc1.png
             sc2.png
           if-no-files-found: warn
