@@ -72,9 +72,11 @@ function scanExports() {
   if (expScanned) return;
   try {
     var mods = Process.enumerateModules();
+    var sawCocos = false;
     var hits = [];
     for (var i = 0; i < mods.length; i++) {
       if (mods[i].name.indexOf('cocos') < 0) continue;
+      sawCocos = true;
       try {
         var sy = mods[i].enumerateSymbols();
         for (var j = 0; j < sy.length; j++) {
@@ -83,7 +85,8 @@ function scanExports() {
         }
       } catch (e0) {}
     }
-    if (hits.length) emit({ ev: 'cocos-syms', n: hits });
+    if (!sawCocos) return;   // retry until cocos is loaded
+    emit({ ev: 'cocos-syms', n: hits });
     expScanned = true;
   } catch (e) {}
 }
