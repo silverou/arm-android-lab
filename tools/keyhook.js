@@ -65,6 +65,39 @@ function hookKey() {
   return true;
 }
 
+// v67: after cocos is located, also attach the libcurl URL logger
+var curlArmed = false;
+function armCurl() {
+  if (curlArmed) return;
+  var addr = null;
+  try { addr = Module.getGlobalExportByName('curl_easy_setopt'); } catch (e) { addr = null; }
+  if (!addr || addr.isNull()) {
+    try {
+      var mods = Process.enumerateModules();
+      for (var i = 0; i < mods.length; i++) {
+        try {
+          var e1 = mods[i].findExportByName('curl_easy_setopt');
+          if (e1 && !e1.isNull()) { addr = e1; break; }
+        } catch (e2) {}
+      }
+    } catch (e3) {}
+  }
+  if (!addr || addr.isNull()) return;
+  curlArmed = true;
+  var cn = 0;
+  Interceptor.attach(addr, {
+    onEnter: function (a) {
+      try {
+        if (a[1].toInt32() === 10002 && cn < 200) {
+          cn++;
+          emit({ ev: 'URL', u: a[2].readCString() });
+        }
+      } catch (e4) {}
+    }
+  });
+  emit({ ev: 'curl-log-ready' });
+}
+
 // try now, then poll until libcocos2dlua.so is loaded (up to 180s)
 var tries = 0;
 var iv = setInterval(function () {
@@ -72,6 +105,7 @@ var iv = setInterval(function () {
   var done = false;
   try { done = hookKey(); } catch (e) { emit({ ev: 'poll_err', e: String(e) }); }
   if (done) { clearInterval(iv); return; }
+  armCurl();
   if (tries % 25 === 0) {
     var found = false;
     try { var m2 = Module.getGlobalExportByName(SYM); found = !!(m2 && !m2.isNull()); } catch (e) {}
