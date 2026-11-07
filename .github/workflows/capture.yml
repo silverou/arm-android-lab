@@ -243,9 +243,29 @@ jobs:
           echo "mitm started pid=$MITMPID"
           sleep 3
           ss -ltn | grep 8080 || true
-          sudo iptables -t nat -A PREROUTING -i docker0 -p tcp --dport 443 -j REDIRECT --to-ports 8080
-          sudo iptables -t nat -A PREROUTING -i docker0 -p tcp --dport 80 -j REDIRECT --to-ports 8080
-          sudo iptables -t nat -L PREROUTING -v -n
+          sudo modprobe nf_nat_redirect 2>&1 || true
+          sudo modprobe xt_REDIRECT 2>&1 || true
+          REDOK=none
+          for tool in iptables iptables-legacy; do
+            command -v $tool >/dev/null 2>&1 || continue
+            if sudo $tool -t nat -A PREROUTING -i docker0 -p tcp --dport 443 -j REDIRECT --to-ports 8080 2>/tmp/e443.txt; then
+              sudo $tool -t nat -A PREROUTING -i docker0 -p tcp --dport 80 -j REDIRECT --to-ports 8080 2>/tmp/e80.txt || true
+              REDOK=$tool; echo "REDIRECT ok via $tool"; break
+            else
+              echo "REDIRECT fail via $tool: $(cat /tmp/e443.txt 2>/dev/null)"
+            fi
+          done
+          if [ "$REDOK" = "none" ]; then
+            echo "--- fallback: native nft ---"
+            sudo nft 'add table ip nat' 2>/dev/null || true
+            sudo nft 'add chain ip nat prerouting { type nat hook prerouting priority -100; }' 2>/dev/null || true
+            sudo nft 'add rule ip nat prerouting iifname "docker0" tcp dport 443 redirect to :8080' 2>&1 || true
+            sudo nft 'add rule ip nat prerouting iifname "docker0" tcp dport 80 redirect to :8080' 2>&1 || true
+            sudo nft list chain ip nat prerouting 2>&1 || true
+          fi
+          echo "redirect_tool=$REDOK"
+          sudo iptables -t nat -L PREROUTING -v -n || true
+          sudo iptables-legacy -t nat -L PREROUTING -v -n 2>/dev/null || true
           for i in $(seq 1 20); do [ -f /tmp/mitm/mitmproxy-ca-cert.pem ] && break; sleep 1; done
           ls -la /tmp/mitm/ || true
           HASH=$(openssl x509 -inform PEM -subject_hash_old -in /tmp/mitm/mitmproxy-ca-cert.pem 2>/dev/null | head -1)
@@ -303,7 +323,7 @@ jobs:
           python3 tools/flows_dump.py || true
           head -60 flows.txt 2>/dev/null || true
           echo "--- iptables counters (did guest 443 hit the proxy?) ---"
-          sudo iptables -t nat -L PREROUTING -v -n > ipt1.txt 2>&1 || true
+          { sudo iptables -t nat -L PREROUTING -v -n 2>&1 || true; sudo iptables-legacy -t nat -L PREROUTING -v -n 2>&1 || true; sudo nft list chain ip nat prerouting 2>&1 || true; } > ipt1.txt
           cat ipt1.txt
           echo "--- mitmdump log tail ---"
           tail -80 /tmp/mitmdump.log > mitm1.log 2>&1 || true
