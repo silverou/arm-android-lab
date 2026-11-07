@@ -236,7 +236,7 @@ jobs:
         run: |
           set -x
           python3 -m pip install -q --break-system-packages mitmproxy >/dev/null 2>&1 || true
-          python3 -c "import mitmproxy; print('mitmproxy', mitmproxy.__version__)"
+          python3 -c "import mitmproxy, importlib.metadata as im; print('mitmproxy', im.version('mitmproxy'))" || true
           rm -rf /tmp/mitm; mkdir -p /tmp/mitm
           nohup mitmdump -p 8080 --set confdir=/tmp/mitm -w /tmp/flows.mitm --listen-host 0.0.0.0 >/tmp/mitmdump.log 2>&1 &
           MITMPID=$!
