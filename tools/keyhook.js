@@ -174,6 +174,66 @@ function armXxtea() {
   if (found.length) { xtArmed = true; emit({ ev: 'xt-armed', w: found }); }
 }
 
+// v73: download-pipeline hooks — every URL these carry is a resource URL.
+// std::string reader handles libc++ long/SSO layouts.
+function readStdStr(p) {
+  try {
+    var b = p.readPointer();
+    if (!b.isNull() && (b.toInt32() & 1) === 0) {
+      var sz = p.add(8).readU64().toNumber();
+      if (sz > 0 && sz < 4096) return b.readUtf8String(sz);
+    } else {
+      var ss = (p.readU8() >> 1) & 0x7f;
+      if (ss > 0) return p.add(1).readUtf8String(ss);
+    }
+  } catch (e) {}
+  try { return p.readCString(); } catch (e2) { return ''; }
+}
+var dlArmed = false;
+function armDownloads() {
+  if (dlArmed) return;
+  var mods = [];
+  try { mods = Process.enumerateModules(); } catch (e) {}
+  function resolve(name) {
+    try { var a0 = Module.getGlobalExportByName(name); if (a0 && !a0.isNull()) return a0; } catch (e) {}
+    for (var i = 0; i < mods.length; i++) {
+      if ((mods[i].name || '').indexOf('cocos') < 0) continue;
+      try { var e1 = mods[i].findExportByName(name); if (e1 && !e1.isNull()) return e1; } catch (e2) {}
+    }
+    return null;
+  }
+  var dn = 0;
+  function hookStr(tag, sym, order) {
+    var addr = resolve(sym);
+    if (!addr) return false;
+    Interceptor.attach(addr, {
+      onEnter: function (a) {
+        try {
+          if (dn >= 120) return;
+          dn++;
+          var o = { ev: 'DL-URL', w: tag };
+          for (var k = 0; k < order.length; k++) {
+            var idx = order[k][0];
+            o[order[k][1]] = readStdStr(a[idx]);
+          }
+          emit(o);
+        } catch (e3) {}
+      }
+    });
+    return true;
+  }
+  var armed = [];
+  if (hookStr('amEx.create', '_ZN7cocos2d9extension15AssetsManagerEx6createERKSsS3_', [[0,'manifestUrl'],[1,'storage']])) armed.push('create');
+  if (hookStr('setVersionFileUrl', '_ZN7cocos2d9extension13AssetsManager17setVersionFileUrlEPKc', [[0,'url']])) armed.push('verUrl');
+  if (hookStr('downloadSync', '_ZN7cocos2d9extension10Downloader12downloadSyncERKSsS3_S3_', [[0,'url'],[1,'dst'],[2,'cksum']])) armed.push('dlSync');
+  if (hookStr('downloadToBufferSync', '_ZN7cocos2d9extension10Downloader20downloadToBufferSyncERKSsPhRKlS3_', [[0,'url']])) armed.push('dlBuf');
+  var su = resolve('_ZN7cocos2d9extension15AssetsManagerEx11startUpdateEv');
+  if (su) { Interceptor.attach(su, { onEnter: function () { try { emit({ ev: 'DL-START' }); } catch (e) {} } }); armed.push('startUpdate'); }
+  var du = resolve('_ZN7cocos2d9extension13AssetsManager21downloadAndUncompressEv');
+  if (du) { Interceptor.attach(du, { onEnter: function () { try { emit({ ev: 'DL-START-AM' }); } catch (e) {} } }); armed.push('dlUncmp'); }
+  if (armed.length) { dlArmed = true; emit({ ev: 'dl-armed', w: armed }); }
+}
+
 // v67: after cocos is located, also attach the libcurl URL logger
 var curlArmed = false;
 function armCurl() {
@@ -216,6 +276,7 @@ var iv = setInterval(function () {
   armCurl();
   scanExports();
   armXxtea();
+  armDownloads();
   if (done) { clearInterval(iv); return; }
   if (tries % 25 === 0) {
     var found = false;
