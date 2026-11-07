@@ -9,6 +9,7 @@ var n = 0;
 var CAP = 700;
 // v37 diagnostics: prove the fopen/openat listeners fire from this script
 var tdbg = { fopen: 0, openat: 0 };
+var fdbN = 0;
 var tmiss = { fopen: 0, openat: 0 };
 
 function log(o, key) {
@@ -159,6 +160,13 @@ function hookPath(sym, tag) {
       onEnter: function (a) {
         try {
           var path = a[idx].readCString();
+          if (path && path.indexOf('/proc/self/fd/') === 0 && fdbN < 20) {
+            fdbN++;
+            try {
+              var bt = Thread.backtrace(this.context, Backtracer.ACCURATE).slice(0, 6).map(function (x) { return x.toString(); });
+              send({ ev: 'fdb', p: path, bt: bt });
+            } catch (e5) {}
+          }
           if ((tag === 'fopen' || tag === 'openat') && path && tdbg[tag] < 25) {
             tdbg[tag]++;
             send({ ev: 'tfe', t: tag, p: path });
