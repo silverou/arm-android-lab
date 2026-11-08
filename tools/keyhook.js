@@ -12,7 +12,9 @@
 function emit(o) { send(o); }
 
 var SYM = '_ZN7cocos2d8LuaStack14setHongenKAndSEPKciS2_i';
+var keyHooked = false;
 function hookKey() {
+  if (keyHooked) return true;
   var exp = null;
   try {
     exp = Module.getGlobalExportByName(SYM);
@@ -61,6 +63,7 @@ function hookKey() {
       }
     }
   });
+  keyHooked = true;
   emit({ ev: 'keyhook_installed' });
   return true;
 }
@@ -267,6 +270,107 @@ function armCurl() {
   emit({ ev: 'curl-log-ready' });
 }
 
+// ---- v83: Lua takeover inside keyhook (proven polling path) ----
+var luaL = null, luaFns = {}, luaCalls = 0, luaInj = 0, luaArmed = false;
+var LUA_CODE = [
+  'local out = {}',
+  'local function P(s) out[#out+1] = s end',
+  'P("INJ_VERSION:"..tostring(_VERSION))',
+  'local names = {}',
+  'for k in pairs(_G) do names[#names+1] = tostring(k) end',
+  'table.sort(names)',
+  'P("INJ_GCOUNT:"..#names)',
+  'P("INJ_NAMES:"..table.concat(names, ",", 1, math.min(#names, 240)))',
+  'if package and package.loaded then',
+  '  local mods = {}',
+  '  for k in pairs(package.loaded) do mods[#mods+1] = tostring(k) end',
+  '  table.sort(mods)',
+  '  P("INJ_MODS:"..table.concat(mods, ",", 1, math.min(#mods, 200)))',
+  '  for _,m in ipairs(mods) do',
+  '    if m:find("asset") or m:find("purchase") or m:find("user") or m:find("store") or m:find("vip") then',
+  '      local t = package.loaded[m]',
+  '      if type(t) == "table" then',
+  '        local ks = {}',
+  '        for k in pairs(t) do ks[#ks+1] = tostring(k) end',
+  '        table.sort(ks)',
+  '        P("INJ_MKEYS:"..m..":"..table.concat(ks, ",", 1, math.min(#ks, 80)))',
+  '      end',
+  '    end',
+  '  end',
+  'end',
+  'for _,s in ipairs(out) do print(s) end'
+].join('\n');
+
+function luaResolve() {
+  var mods = [];
+  try { mods = Process.enumerateModules(); } catch (e) { return false; }
+  function findAny(name) {
+    try { var g = Module.getGlobalExportByName(name); if (g && !g.isNull()) return g; } catch (e) {}
+    for (var i = 0; i < mods.length; i++) {
+      try { var q = mods[i].findExportByName(name); if (q && !q.isNull()) return q; } catch (e) {}
+    }
+    return null;
+  }
+  ['luaL_loadbuffer', 'luaL_loadbufferx', 'lua_load', 'luaL_loadfile', 'luaL_loadstring', 'lua_pcall', 'lua_tolstring'].forEach(function (n) {
+    if (luaFns[n]) return;
+    var q = findAny(n);
+    if (q) luaFns[n] = q;
+  });
+  return !!(luaFns['luaL_loadbuffer'] && luaFns['lua_pcall'] && luaFns['lua_tolstring']);
+}
+
+function luaRunInject() {
+  if (luaInj !== 0 || !luaStatePtr) return;
+  luaInj = 1;
+  try {
+    var codeStr = Memory.allocUtf8String(LUA_CODE);
+    var fnLoad = new NativeFunction(luaFns['luaL_loadbuffer'], 'int', ['pointer', 'pointer', 'size_t', 'pointer']);
+    var fnPcall = new NativeFunction(luaFns['lua_pcall'], 'int', ['pointer', 'int', 'int', 'int']);
+    var nm = Memory.allocUtf8String('=frida_inject');
+    var r = fnLoad(luaStatePtr, codeStr, LUA_CODE.length, nm);
+    emit({ ev: 'inj_load', r: r });
+    if (r === 0) {
+      var rc = fnPcall(luaStatePtr, 0, 0, 0);
+      emit({ ev: 'inj_pcall', rc: rc });
+      if (rc !== 0) {
+        try {
+          var fnToStr = new NativeFunction(luaFns['lua_tolstring'], 'pointer', ['pointer', 'int', 'pointer']);
+          var szp = Memory.alloc(4);
+          var ps = fnToStr(luaStatePtr, -1, szp);
+          if (!ps.isNull()) emit({ ev: 'inj_err', msg: ps.readUtf8String() });
+        } catch (e) {}
+      }
+    }
+  } catch (e) {
+    emit({ ev: 'inj_exc', e: String(e) });
+  }
+}
+
+var luaStatePtr = null;
+function armLua() {
+  if (luaArmed) return;
+  if (!luaResolve()) return;
+  luaArmed = true;
+  ['luaL_loadbuffer', 'luaL_loadbufferx', 'lua_load', 'luaL_loadfile', 'luaL_loadstring', 'lua_pcall'].forEach(function (n) {
+    var p = luaFns[n];
+    if (!p) return;
+    try {
+      Interceptor.attach(p, {
+        onEnter: function (a) {
+          luaCalls++;
+          if (!luaStatePtr) {
+            luaStatePtr = a[0];
+            emit({ ev: 'lua_state', via: n, p: luaStatePtr.toString() });
+          }
+          if (luaInj === 0 && luaCalls > 3) luaRunInject();
+        }
+      });
+      emit({ ev: 'lua_hooked', sym: n });
+    } catch (e) { emit({ ev: 'lua_hook_err', sym: n, e: String(e) }); }
+  });
+  emit({ ev: 'lua_armed' });
+}
+
 // try now, then poll until libcocos2dlua.so is loaded (up to 180s)
 var tries = 0;
 var iv = setInterval(function () {
@@ -277,7 +381,8 @@ var iv = setInterval(function () {
   scanExports();
   armXxtea();
   armDownloads();
-  if (done) { clearInterval(iv); return; }
+  try { armLua(); } catch (e5) { emit({ ev: 'lua_arm_err', e: String(e5) }); }
+  if (done && luaArmed) { clearInterval(iv); return; }
   if (tries % 25 === 0) {
     var found = false;
     try { var m2 = Module.getGlobalExportByName(SYM); found = !!(m2 && !m2.isNull()); } catch (e) {}
@@ -295,7 +400,7 @@ var iv = setInterval(function () {
       onLeave: function () {
         if (this.p && this.p.indexOf('libcocos2dlua') >= 0) {
           emit({ ev: 'cocos_loaded', path: this.p });
-          setTimeout(function () { hookKey(); }, 50);
+          setTimeout(function () { hookKey(); try { armLua(); } catch (e6) {} }, 50);
         }
       }
     });
