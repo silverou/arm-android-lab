@@ -261,12 +261,16 @@ def main():
 
     scripts = []
     for path in scripts_paths:
-        src = script_source(path)
-        s = sess.create_script(src)
-        s.on("message", lambda m, d: on_message(m, d, None))
-        s.load()
-        scripts.append(s)
-        print("LOADED", path, "at", int(time.time()), flush=True)
+        try:
+            src = script_source(path)
+            s = sess.create_script(src)
+            s.on("message", lambda m, d: on_message(m, d, None))
+            s.load()
+            scripts.append(s)
+            print("LOADED", path, "at", int(time.time()), flush=True)
+        except Exception as e:
+            print("SCRIPT_FAIL", path, str(e)[:300], flush=True)
+            continue
         try:
             dev.enumerate_processes()
             print("PING_OK after", path, flush=True)
