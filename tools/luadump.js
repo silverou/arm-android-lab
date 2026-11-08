@@ -1,457 +1,62 @@
-name: capture
+'use strict';
+/*
+ * Dump URL literals out of Lua chunk loads: the Lua scripts arrive at
+ * luaL_loadbuffer already decrypted, so any URL template literal (e.g. the
+ * resource-zip builder) becomes visible here even when the final string is
+ * assembled at runtime.
+ */
+var seen = {};
+var total = 0;
+var CAP = 800;
+var hooked = {};
 
-on:
-  workflow_dispatch:
+function tryHook(mod, name) {
+  try {
+    if (hooked[name]) return true;
+    var p = mod.findExportByName(name);
+    if (!p) return false;
+    hooked[name] = true;
+    var isLoad = name === 'lua_load';
+    Interceptor.attach(p, {
+      onEnter: function (a) {
+        if (total >= CAP) return;
+        try {
+          var buf, sz;
+          if (isLoad) return; // lua_load uses a reader callback; skip
+          buf = a[1];
+          sz = a[2].toUInt32();
+          if (sz < 16 || sz > 8 * 1024 * 1024) return;
+          var txt = buf.readUtf8String(Math.min(sz, 2 * 1024 * 1024)) || '';
+          if (txt.length < 16) return;
+          var urls = txt.match(/https?:\/\/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]{8,300}/g);
+          if (!urls) return;
+          var uniq = [];
+          urls.forEach(function (u) {
+            if (!seen[u]) { seen[u] = 1; uniq.push(u); }
+          });
+          if (!uniq.length) return;
+          total += uniq.length;
+          send({ ev: 'lua_url', n: uniq.length, urls: uniq.slice(0, 40) });
+        } catch (e) {}
+      }
+    });
+    send({ ev: 'luadump_hook', sym: name, mod: mod.name });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
 
-jobs:
-  capture:
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
+function arm() {
+  Process.enumerateModules().forEach(function (m) {
+    ['luaL_loadbuffer', 'luaL_loadbufferx'].forEach(function (n) { tryHook(m, n); });
+  });
+}
 
-      - name: binder setup
-        run: |
-          set -x
-          sudo modprobe binder_linux devices="binder,hwbinder,vndbinder"
-          sudo mkdir -p /dev/binderfs
-          sudo mount -t binder binder /dev/binderfs
-          ls -la /dev/binderfs | head -8
-          command -v adb || { timeout 300 bash -c 'sudo apt-get update -qq && sudo apt-get install -y -qq adb'; }
-          command -v xz
-          command -v python3
-          echo binder-ok
-
-      - name: redroid image pull
-        run: |
-          echo "start $(date -u +%T)"
-          timeout 480 sudo docker pull redroid/redroid:12.0.0-latest
-          echo "pulled $(date -u +%T)"
-
-      - name: redroid boot
-        run: |
-          set -x
-          echo "boot start $(date -u +%T)"
-          sudo docker rm -f redroid 2>/dev/null || true
-          sudo docker run -d --privileged --name redroid \
-            -v /dev/binderfs:/dev/binderfs \
-            -p 5555:5555 \
-            -p 5556:5555 \
-            -p 127.0.0.1:27042:27042 \
-            redroid/redroid:12.0.0-latest \
-            androidboot.redroid_gpu_mode=guest
-          IP=$(sudo docker inspect -f '{{.NetworkSettings.IPAddress}}' redroid)
-          echo "bridge ip $IP"
-          adb kill-server || true
-          echo "--- host gpu ---"
-          ls -la /dev/dri 2>&1 | head -5 || true
-          echo "--- guest gpu/egl inventory ---"
-          sudo docker exec redroid /system/bin/sh -c '
-            export PATH=/system/bin:$PATH
-            echo "gpu_mode=$(getprop ro.boot.redroid_gpu_mode)"
-            getprop | grep -E "ro\.hardware|debug\.egl|renderengine|redroid|ro\.gfx" || true
-            echo "== /system/lib64/egl =="
-            ls -la /system/lib64/egl/ 2>/dev/null || echo none
-            echo "== /vendor/lib64/egl =="
-            ls -la /vendor/lib64/egl/ 2>/dev/null || echo none
-            echo "== /system_ext/lib64/egl =="
-            ls -la /system_ext/lib64/egl/ 2>/dev/null || echo none
-            echo "== hw modules =="
-            ls /vendor/lib64/hw/ /system/lib64/hw/ 2>/dev/null | head -30 || true
-            echo "== gate props (real values) =="
-            echo "ro.build.flavor=$(getprop ro.build.flavor)"
-            echo "ro.product.model=$(getprop ro.product.model)"
-            echo "ro.hardware=$(getprop ro.hardware)"
-            echo "ro.product.board=$(getprop ro.product.board)"
-            echo "ro.board.platform=$(getprop ro.board.platform)"
-            echo "gsm.version.baseband=$(getprop gsm.version.baseband)"
-            echo "cmdline=$(cat /proc/cmdline)"
-          ' || true
-          echo "--- v52: no SF restart (v51 evidence: EGL_BAD_SURFACE system-wide after our restart) ---"
-          sleep 12
-          GUEST=0
-          GUEST_MODE=docker
-          ADB_SERIAL="$IP:5555"
-          READY='export PATH=/system/bin:/system/xbin:$PATH; service check package >/dev/null 2>&1 || exit 3; [ "$(getprop init.svc.surfaceflinger)" = running ] || exit 4; [ "$(getprop init.svc.zygote)" = running ] || exit 5; echo READY'
-          hits=0
-          for i in $(seq 1 48); do
-            ok=0
-            if sudo docker exec redroid /system/bin/sh -c "$READY" >/dev/null 2>&1; then
-              ok=1
-            fi
-            if [ "$ok" = "1" ]; then hits=$((hits+1)); else hits=0; fi
-            if [ "$hits" -ge 2 ]; then
-              GUEST=1
-              echo "READY stable after $((i*5))s mode=$GUEST_MODE"
-              break
-            fi
-            sleep 5
-          done
-          echo "--- guest diagnostics ---"
-          sudo docker exec redroid /system/bin/sh -c 'export PATH=/system/bin:$PATH; echo boot_completed=$(getprop sys.boot_completed); echo zygote=$(getprop init.svc.zygote); echo bootanim=$(getprop init.svc.bootanim); echo surfaceflinger=$(getprop init.svc.surfaceflinger); echo hwcomposer=$(getprop init.svc.vendor.hwcomposer-2-1); echo egl_prop=$(getprop ro.hardware.egl)' 2>/dev/null || true
-          sudo docker exec redroid /system/bin/sh -c 'ps -A | grep -E "zygote|system_server|servicemanager|surfaceflinger|adbd" || echo NO_CORE_SERVICES' 2>/dev/null || true
-          echo "--- restarting services ---"
-          sudo docker exec redroid /system/bin/sh -c 'getprop | grep -E "init.svc.*restarting" | head -15' 2>/dev/null || true
-          echo "--- guest logcat tail ---"
-          sudo docker exec redroid /system/bin/logcat -d -v time 2>/dev/null | tail -60 || true
-          echo "--- host dmesg tail ---"
-          sudo dmesg 2>/dev/null | tail -20 || true
-          se=$(sudo docker exec redroid /system/bin/getenforce 2>/dev/null || true)
-          echo "selinux=$se"
-          if [ "$se" = "Enforcing" ]; then
-            sudo docker exec redroid /system/bin/setenforce 0 || true
-          fi
-          adb devices || true
-          {
-            echo "GUEST_MODE=$GUEST_MODE"
-            echo "ADB_SERIAL=$ADB_SERIAL"
-            echo "BRIDGE_IP=$IP"
-            echo "FRIDA_DEVICE=$IP:27042"
-          } >> "$GITHUB_ENV"
-          echo "GUEST_MODE=$GUEST_MODE"
-          if [ "$GUEST" != "1" ]; then
-            echo "framework never became stable; guest boot stalled"
-            exit 1
-          fi
-          echo "boot done $(date -u +%T)"
-
-      - name: download payload
-        run: |
-          curl -sL -o app.apk "https://github.com/silverou/arm-android-lab/releases/download/payload-v1/hepy_2.0.4.apk"
-          ls -la app.apk
-          sha256sum app.apk
-
-      - name: install app
-        run: |
-          set -x
-          if [ "$GUEST_MODE" = "adb" ]; then
-            adb -s "$ADB_SERIAL" push app.apk /data/local/tmp/app.apk
-          else
-            sudo docker cp app.apk redroid:/data/local/tmp/app.apk
-          fi
-          out=$(tools/gx.sh "pm install -r -g /data/local/tmp/app.apk" 2>&1 | tail -5)
-          echo "$out"
-          echo "$out" | grep -a Success
-          tools/gx.sh "pm path com.ihuman.pinyin"
-
-      - name: plain launch probe
-        run: |
-          set -x
-          tools/gx.sh "pm list packages -d" || true
-          echo "--- wake/unlock/stayon (v51: hwui aborts on no-surface when display is off) ---"
-          tools/gx.sh "input keyevent 224" || true
-          tools/gx.sh "wm dismiss-keyguard" || true
-          tools/gx.sh "settings put system screen_off_timeout 2147483647" || true
-          tools/gx.sh "svc power stayon true" || true
-          tools/gx.sh "dumpsys power | grep -aE 'mWakefulness|Display Power'" | head -6 || true
-          tools/gx.sh "logcat -c" || true
-          tools/gx.sh "am start -n com.ihuman.pinyin/org.cocos2dx.lua.AppActivity" || true
-          sleep 45
-          echo "--- pid ---"
-          tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
-          echo "--- start evidence ---"
-          tools/gx.sh "logcat -d -v time" 2>/dev/null | grep -aE "Start proc.*ihuman|0xdead|Fatal signal|not started|blocked" | head -15 || true
-          echo "--- activity state ---"
-          tools/gx.sh "dumpsys activity activities | grep -a -B2 -A6 ihuman" 2>/dev/null | head -30 || true
-          tools/gx.sh "logcat -d -v time" > logcat_plain.txt 2>/dev/null || true
-          tools/gx.sh "am force-stop com.ihuman.pinyin" || true
-
-      - name: frida setup
-        run: |
-          set -x
-          curl -sL -o fs.xz "https://github.com/frida/frida/releases/download/17.24.3/frida-server-17.24.3-android-arm64.xz"
-          xz -d fs.xz
-          sudo docker cp fs redroid:/data/local/tmp/.logd_helper
-          sudo docker cp tools/frida_launch.sh redroid:/data/local/tmp/frida_launch.sh
-          sudo docker cp tools/bridge_v20.js redroid:/data/local/tmp/v20.js
-          sudo docker cp tools/bridge_v21.js redroid:/data/local/tmp/v21.js
-          sudo docker cp tools/bridge_v23.js redroid:/data/local/tmp/v23.js
-          sudo docker cp tools/bridge_v24.js redroid:/data/local/tmp/v24.js
-          sudo docker cp tools/bridge_v25.js redroid:/data/local/tmp/v25.js
-          sudo docker cp tools/bridge_v26.js redroid:/data/local/tmp/v26.js
-          sudo docker cp tools/bridge_v27.js redroid:/data/local/tmp/v27.js
-          sudo docker cp tools/bridge_v28.js redroid:/data/local/tmp/v28.js
-          sudo docker cp tools/bridge_v29.js redroid:/data/local/tmp/v29.js
-          sudo docker cp tools/bridge_v30.js redroid:/data/local/tmp/v30.js
-          sudo docker cp tools/bridge_v31.js redroid:/data/local/tmp/v31.js
-          sudo docker cp tools/bridge_v32.js redroid:/data/local/tmp/v32.js
-          sudo docker cp tools/bridge_v33.js redroid:/data/local/tmp/v33.js
-          sudo docker cp tools/bridge_v34.js redroid:/data/local/tmp/v34.js
-          sudo docker cp tools/bridge_v35.js redroid:/data/local/tmp/v35.js
-          sudo docker cp tools/bridge_v36.js redroid:/data/local/tmp/v36.js
-          sudo docker cp tools/bridge_v37.js redroid:/data/local/tmp/v37.js
-          sudo docker cp tools/bridge_v38.js redroid:/data/local/tmp/v38.js
-          sudo docker cp tools/bridge_v39.js redroid:/data/local/tmp/v39.js
-          sudo docker cp tools/bridge_v42.js redroid:/data/local/tmp/v42.js
-          sudo docker cp tools/bridge_v43.js redroid:/data/local/tmp/v43.js
-          sudo docker cp tools/bridge_v44.js redroid:/data/local/tmp/v44.js
-          sudo docker cp tools/bridge_v45.js redroid:/data/local/tmp/v45.js
-          sudo docker cp tools/bridge_v46.js redroid:/data/local/tmp/v46.js
-          sudo docker cp tools/bridge_v47.js redroid:/data/local/tmp/v47.js
-          sudo docker cp tools/bridge_v48.js redroid:/data/local/tmp/v48.js
-          sudo docker cp tools/bridge_v49.js redroid:/data/local/tmp/v49.js
-          sudo docker cp tools/bridge_v50.js redroid:/data/local/tmp/v50.js
-          sudo docker cp tools/bridge_v54.js redroid:/data/local/tmp/v54.js
-          sudo docker cp tools/bridge_v56.js redroid:/data/local/tmp/v56.js
-          sudo docker cp tools/bridge_v57.js redroid:/data/local/tmp/v57.js
-          sudo docker cp tools/bridge_v58.js redroid:/data/local/tmp/v58.js
-          sudo docker cp tools/bridge_v59.js redroid:/data/local/tmp/v59.js
-          sudo docker cp tools/bridge_v60.js redroid:/data/local/tmp/v60.js
-          sudo docker cp tools/bridge_v61.js redroid:/data/local/tmp/v61.js
-          sudo docker cp tools/bridge_v62.js redroid:/data/local/tmp/v62.js
-          sudo docker cp tools/bridge_v63.js redroid:/data/local/tmp/v63.js
-          sudo docker cp tools/bridge_v64.js redroid:/data/local/tmp/v64.js
-          sudo docker cp tools/bridge_v65.js redroid:/data/local/tmp/v65.js
-          sudo docker cp tools/bridge_v66.js redroid:/data/local/tmp/v66.js
-          sudo docker exec redroid /system/bin/sh -c 'ls -la /data/local/tmp/v3[0-9].js | tail -5'
-          sudo docker exec redroid /system/bin/sh -c 'chmod 755 /data/local/tmp/.logd_helper /data/local/tmp/frida_launch.sh; chmod 644 /data/local/tmp/v2*.js'
-          # root is required for zygote spawn gating; adbd env (proven sufficient) is inherited
-          sudo docker exec -d redroid /system/bin/sh /data/local/tmp/frida_launch.sh
-          sleep 3
-          echo "--- frida-server process ---"
-          sudo docker exec redroid /system/bin/sh -c 'ps -A -o USER,PID,NAME 2>/dev/null | grep -a logd_helper || ps -A | grep -a logd_helper || echo NOT_RUNNING'
-          # host-side proof: the port must actually accept connections
-          PORT_OK=""
-          for i in $(seq 1 15); do
-            if timeout 2 bash -c "exec 3<>/dev/tcp/$BRIDGE_IP/27042" 2>/dev/null; then
-              PORT_OK="$BRIDGE_IP:27042"; break
-            fi
-            if timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/27042" 2>/dev/null; then
-              PORT_OK="127.0.0.1:27042"; break
-            fi
-            sleep 2
-          done
-          if [ -z "$PORT_OK" ]; then
-            echo "frida-server port never opened; diagnostics:"
-            tools/gx.sh "logcat -d -v time" 2>/dev/null | grep -a "logd_helper\|frida" | tail -25 || true
-            sudo docker exec redroid /system/bin/sh -c 'wc -l /data/local/tmp/.adbenv 2>/dev/null || echo no-adbenv' || true
-            exit 1
-          fi
-          echo "FRIDA_DEVICE=$PORT_OK" >> "$GITHUB_ENV"
-          echo "frida listening on $PORT_OK"
-          python3 -m pip install -q --break-system-packages frida==17.24.3
-          echo "frida ready"
-
-      - name: mitm setup (guest-wide TLS capture)
-        run: |
-          set -x
-          python3 -m pip install -q --break-system-packages mitmproxy >/dev/null 2>&1 || true
-          python3 -c "import mitmproxy, importlib.metadata as im; print('mitmproxy', im.version('mitmproxy'))" || true
-          rm -rf /tmp/mitm; mkdir -p /tmp/mitm
-          nohup mitmdump --mode transparent -p 8080 --set confdir=/tmp/mitm --set block_global=false --set flow_detail=1 -w /tmp/flows.mitm --listen-host 0.0.0.0 >/tmp/mitmdump.log 2>&1 &
-          MITMPID=$!
-          echo "mitm started pid=$MITMPID"
-          sleep 3
-          ss -ltn | grep 8080 || true
-          sudo modprobe nf_nat_redirect 2>&1 || true
-          sudo modprobe xt_REDIRECT 2>&1 || true
-          REDOK=none
-          for tool in iptables iptables-legacy; do
-            command -v $tool >/dev/null 2>&1 || continue
-            if sudo $tool -t nat -A PREROUTING -i docker0 -p tcp --dport 443 -j REDIRECT --to-ports 8080 2>/tmp/e443.txt; then
-              sudo $tool -t nat -A PREROUTING -i docker0 -p tcp --dport 80 -j REDIRECT --to-ports 8080 2>/tmp/e80.txt || true
-              REDOK=$tool; echo "REDIRECT ok via $tool"; break
-            else
-              echo "REDIRECT fail via $tool: $(cat /tmp/e443.txt 2>/dev/null)"
-            fi
-          done
-          if [ "$REDOK" = "none" ]; then
-            echo "--- fallback: native nft ---"
-            sudo nft 'add table ip nat' 2>/dev/null || true
-            sudo nft 'add chain ip nat prerouting { type nat hook prerouting priority -100; }' 2>/dev/null || true
-            sudo nft 'add rule ip nat prerouting iifname "docker0" tcp dport 443 redirect to :8080' 2>&1 || true
-            sudo nft 'add rule ip nat prerouting iifname "docker0" tcp dport 80 redirect to :8080' 2>&1 || true
-            sudo nft list chain ip nat prerouting 2>&1 || true
-          fi
-          echo "redirect_tool=$REDOK"
-          sudo iptables -t nat -L PREROUTING -v -n || true
-          sudo iptables-legacy -t nat -L PREROUTING -v -n 2>/dev/null || true
-          for i in $(seq 1 20); do [ -f /tmp/mitm/mitmproxy-ca-cert.pem ] && break; sleep 1; done
-          ls -la /tmp/mitm/ || true
-          HASH=$(openssl x509 -inform PEM -subject_hash_old -in /tmp/mitm/mitmproxy-ca-cert.pem 2>/dev/null | head -1)
-          echo "ca hash=$HASH"
-          sudo docker cp /tmp/mitm/mitmproxy-ca-cert.pem redroid:/data/local/tmp/mca.pem || true
-          sudo docker exec -e CH="$HASH" redroid /system/bin/sh -c '
-            rm -rf /data/local/tmp/cacerts
-            cp -r /system/etc/security/cacerts /data/local/tmp/cacerts
-            cp /data/local/tmp/mca.pem /data/local/tmp/cacerts/$CH.0
-            chmod 644 /data/local/tmp/cacerts/$CH.0
-            chown root:root /data/local/tmp/cacerts/$CH.0
-            mount --bind /data/local/tmp/cacerts /system/etc/security/cacerts
-            ls /system/etc/security/cacerts | wc -l
-            ls /system/etc/security/cacerts | grep -i "$CH" || true
-          ' || true
-          HOSTIP=$(ip -4 route show default | awk '{print $3; exit}')
-          echo "hostip=$HOSTIP"
-          tools/gx.sh "settings put global http_proxy :0" || true
-          tools/gx.sh "settings get global http_proxy" || true
-          echo "MITMPID=$MITMPID" >> "$GITHUB_ENV"
-
-      - name: frida spawn capture
-        run: |
-          set -x
-          tools/gx.sh "am force-stop com.ihuman.pinyin" || true
-          echo "--- wake/unlock/stayon (v51) ---"
-          tools/gx.sh "input keyevent 224" || true
-          tools/gx.sh "wm dismiss-keyguard" || true
-          tools/gx.sh "svc power stayon true" || true
-          tools/gx.sh "dumpsys power | grep -aE 'mWakefulness|Display Power'" | head -6 || true
-          tools/gx.sh "logcat -c" || true
-          echo "--- launcher resolution check ---"
-          tools/gx.sh "cmd package resolve-activity --brief -c android.intent.category.LAUNCHER com.ihuman.pinyin" || true
-          tools/gx.sh "dumpsys package com.ihuman.pinyin | grep -B2 -A6 org.cocos2dx.lua.AppActivity" 2>/dev/null | head -25 || true
-          echo "using FRIDA_DEVICE=$FRIDA_DEVICE"
-          sudo docker exec redroid /system/bin/sh -c 'rm -f /data/local/tmp/lc1.log' || true
-          sudo docker exec -d redroid /system/bin/logcat -f /data/local/tmp/lc1.log -v time || true
-          echo "--- v77 tapper: startup taps then enter lesson tiles ---"
-          ( for i in $(seq 1 5); do
-              tools/gx.sh "input tap 1108 402" >/dev/null 2>&1 || true
-              sleep 1
-              tools/gx.sh "input tap 592 576" >/dev/null 2>&1 || true
-              sleep 1
-              tools/gx.sh "input tap 1188 76" >/dev/null 2>&1 || true
-              sleep 2
-            done
-            sleep 55
-            echo "TAP lesson tile 1" >&2
-            tools/gx.sh "input tap 320 310" >/dev/null 2>&1 || true
-            sleep 10
-            tools/gx.sh "screencap -p /data/local/tmp/t1.png" >/dev/null 2>&1 || true
-            sudo docker exec redroid /system/bin/cat /data/local/tmp/t1.png > t1.png 2>/dev/null || true
-            tools/gx.sh "input tap 1112 113" >/dev/null 2>&1 || true
-            sleep 4
-            echo "TAP lesson tile 2" >&2
-            tools/gx.sh "input tap 620 310" >/dev/null 2>&1 || true
-            sleep 10
-            tools/gx.sh "screencap -p /data/local/tmp/t2.png" >/dev/null 2>&1 || true
-            sudo docker exec redroid /system/bin/cat /data/local/tmp/t2.png > t2.png 2>/dev/null || true
-            echo "TAP next page arrow" >&2
-            tools/gx.sh "input tap 1218 668" >/dev/null 2>&1 || true
-            sleep 10
-            echo "TAP play tile again" >&2
-            tools/gx.sh "input tap 320 310" >/dev/null 2>&1 || true
-            sleep 15
-          ) &
-          TAPPER=$!
-          echo "--- host tcpdump during attempt1 (dns+sni) ---"
-          sudo tcpdump -i any -nn -l 'udp port 53 or tcp port 443' > tcp1.txt 2>/dev/null &
-          TCPD=$!
-          echo "--- UI sequence screenshots (every 20s) ---"
-          ( n=0; while [ $n -lt 12 ]; do sleep 20; n=$((n+1)); tools/gx.sh "screencap -p /data/local/tmp/sq$n.png" >/dev/null 2>&1 || true; sudo docker exec redroid /system/bin/cat "/data/local/tmp/sq$n.png" > "sq$n.png" 2>/dev/null || true; done ) &
-          SEQP=$!
-          DEATH_TAG=att1 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js > hook_out.txt 2>&1 || true
-          kill $TAPPER $SEQP 2>/dev/null || true
-          kill $TCPD 2>/dev/null || true
-          echo "--- mitm flows dump ---"
-          python3 tools/flows_dump.py || true
-          head -60 flows.txt 2>/dev/null || true
-          cp /tmp/flows.mitm flows.mitm 2>/dev/null || true
-          ls -la flows.mitm 2>/dev/null || true
-          echo "--- iptables counters (did guest 443 hit the proxy?) ---"
-          { sudo iptables -t nat -L PREROUTING -v -n 2>&1 || true; sudo iptables-legacy -t nat -L PREROUTING -v -n 2>&1 || true; sudo nft list chain ip nat prerouting 2>&1 || true; } > ipt1.txt
-          cat ipt1.txt
-          echo "--- mitmdump log tail ---"
-          tail -80 /tmp/mitmdump.log > mitm1.log 2>&1 || true
-          tail -20 mitm1.log
-          echo "===== hook_out attempt1 (v66) ====="
-          tail -40 hook_out.txt || true
-          echo "--- app liveness after attempt1 ---"
-          tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
-          tools/gx.sh "dumpsys activity activities | grep -a -B2 -A6 ihuman" 2>/dev/null | head -30 || true
-          tools/gx.sh "screencap -p /data/local/tmp/sc1.png" || true
-          sudo docker exec redroid /system/bin/cat /data/local/tmp/sc1.png > sc1.png 2>/dev/null || true
-          sudo docker exec redroid /system/bin/sh -c 'pkill -f lc1.log || true' || true
-          sudo docker exec redroid /system/bin/cat /data/local/tmp/lc1.log > lc1.txt 2>/dev/null || true
-          ls -la lc1.txt sc1.png 2>/dev/null || true
-          tools/gx.sh "logcat -d -v time" > logcat_att1.txt 2>/dev/null || true
-          grep -aE "0xdead|Fatal signal" logcat_att1.txt | grep -av launcher | grep -av systemui | grep -av settings | tail -8 || true
-          echo "--- server state after attempt1 ---"
-          sudo docker exec redroid /system/bin/sh -c 'ps -A | grep -a logd_helper || echo SERVER_DEAD' || true
-          echo "--- pull .ss dropper + all tombstones ---"
-          sudo docker exec redroid /system/bin/sh -c 'ls -la /data/user/0/com.ihuman.pinyin/files/.ss/' || true
-          mkdir -p ss_dir
-          sudo docker exec redroid /system/bin/sh -c 'ls /data/user/0/com.ihuman.pinyin/files/.ss/ 2>/dev/null' > .ss_ls.txt || true
-          while read f; do [ -n "$f" ] && sudo docker exec redroid /system/bin/cat "/data/user/0/com.ihuman.pinyin/files/.ss/$f" > "ss_dir/$f" 2>/dev/null || true; done < .ss_ls.txt
-          ls -la ss_dir || true
-          sha256sum ss_dir/* 2>/dev/null || true
-          sudo docker exec redroid /system/bin/sh -c 'for t in $(ls -t /data/tombstones 2>/dev/null | head -5); do echo "==== $t"; cat /data/tombstones/$t; done' > tombstones_all.txt 2>/dev/null || true
-          sudo dmesg 2>/dev/null | tail -40 > dmesg_host.txt || true
-          if ! grep -aq "XXTEA_KEY" hook_out.txt; then
-            echo "===== attempt2: restart server, v39 retest ====="
-            sudo docker exec redroid /system/bin/sh -c 'kill $(pidof .logd_helper) 2>/dev/null || true'
-            sleep 2
-            sudo docker exec -d redroid /system/bin/sh /data/local/tmp/frida_launch.sh
-            sleep 4
-            sudo docker exec redroid /system/bin/sh -c 'ps -A | grep -a logd_helper || echo SERVER_DEAD2' || true
-            tools/gx.sh "am force-stop com.ihuman.pinyin" || true
-            tools/gx.sh "logcat -c" || true
-            sudo docker exec redroid /system/bin/sh -c 'rm -f /data/local/tmp/lc2.log' || true
-            sudo docker exec -d redroid /system/bin/logcat -f /data/local/tmp/lc2.log -v time || true
-            ( for i in $(seq 1 70); do
-                tools/gx.sh "input tap 1108 402" >/dev/null 2>&1 || true
-                sleep 1
-                tools/gx.sh "input tap 592 576" >/dev/null 2>&1 || true
-                sleep 1
-                tools/gx.sh "input tap 1188 76" >/dev/null 2>&1 || true
-                sleep 1
-                tools/gx.sh "input tap 640 640" >/dev/null 2>&1 || true
-                sleep 1
-              done ) &
-            TAPPER=$!
-            DEATH_TAG=att2 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js > hook_out2.txt 2>&1 || true
-            kill $TAPPER 2>/dev/null || true
-            echo "===== hook_out attempt2 (v66) ====="
-            tail -40 hook_out2.txt || true
-            cat hook_out2.txt >> hook_out.txt || true
-            echo "--- app liveness after attempt2 ---"
-            tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
-            tools/gx.sh "screencap -p /data/local/tmp/sc2.png" || true
-            sudo docker exec redroid /system/bin/cat /data/local/tmp/sc2.png > sc2.png 2>/dev/null || true
-            sudo docker exec redroid /system/bin/sh -c 'pkill -f lc2.log || true' || true
-            sudo docker exec redroid /system/bin/cat /data/local/tmp/lc2.log > lc2.txt 2>/dev/null || true
-            ls -la lc2.txt sc2.png 2>/dev/null || true
-            tools/gx.sh "logcat -d -v time" > logcat_att2.txt 2>/dev/null || true
-            sudo dmesg 2>/dev/null | tail -40 > dmesg_host2.txt || true
-          fi
-          echo "===== crash markers ====="
-          tools/gx.sh "logcat -d -v time" > logcat_frida.txt 2>/dev/null || true
-          grep -aE "0xdead|Fatal signal" logcat_frida.txt | grep -av launcher3 | grep -av systemui | tail -10 || true
-          grep -a "XXTEA_KEY" hook_out.txt | head -3 || true
-
-      - name: upload artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: capture-out
-          path: |
-            logcat_plain.txt
-            logcat_frida.txt
-            logcat_att1.txt
-            logcat_att2.txt
-            logcat_death_att1.txt
-            logcat_death_att2.txt
-            tombstone_att1.txt
-            tombstone_att2.txt
-            hook_out.txt
-            dmesg_host.txt
-            dmesg_host2.txt
-            tombstones_all.txt
-            ss_dir
-            lc1.txt
-            lc2.txt
-            tcp1.txt
-            flows.txt
-            flows.mitm
-            ipt1.txt
-            mitm1.log
-            hook_out2.txt
-            sc1.png
-            sc2.png
-            sq*.png
-            t1.png
-            t2.png
-          if-no-files-found: warn
-
-      - name: cleanup
-        if: always()
-        run: sudo docker rm -f redroid 2>/dev/null || true
+var iv = setInterval(arm, 1000);
+var ticks = 0;
+var iv2 = setInterval(function () {
+  ticks++;
+  if (ticks > 300) { clearInterval(iv2); clearInterval(iv); }
+}, 1000);
+setTimeout(function () { send({ ev: 'luadump_done', total: total, syms: Object.keys(hooked) }); }, 200000);
