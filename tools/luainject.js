@@ -1,15 +1,15 @@
 'use strict';
 /*
- * Lua state takeover: capture lua_State from luaL_loadbuffer, then (on the
- * Lua thread, inside a guard) load and pcall our own chunk to enumerate the
- * global Lua surface (AssetMgr / PYAssetMgr / ZipAsset ...). Results are
- * printed with print() so they land in logcat.
+ * Lua state takeover v2: the engine dlopens libcocos2dlua and immediately
+ * loads scripts, so lazy polling misses the window. Hook dlopen and arm the
+ * hooks the moment the module lands; also poll fast as a fallback.
  */
 var L = null;
 var fns = {};
 var mod = null;
-var injState = 0; // 0 = not run, 1 = done
+var injState = 0;
 var calls = 0;
+var armed = false;
 
 function findFns() {
   if (!mod) {
@@ -18,7 +18,8 @@ function findFns() {
     });
   }
   if (!mod) return false;
-  ['luaL_loadbuffer', 'lua_pcall', 'lua_tolstring', 'lua_gettop', 'lua_settop', 'lua_pushstring'].forEach(function (n) {
+  ['luaL_loadbuffer', 'luaL_loadbufferx', 'lua_load', 'luaL_loadfile', 'luaL_loadfilex',
+   'luaL_loadstring', 'lua_pcall', 'lua_tolstring', 'lua_gettop', 'lua_settop', 'lua_pushstring'].forEach(function (n) {
     if (fns[n]) return;
     try {
       var p = mod.findExportByName(n);
@@ -29,7 +30,6 @@ function findFns() {
 }
 
 var CODE = [
-  '-- injected by frida',
   'local out = {}',
   'local function P(s) out[#out+1] = s end',
   'P("INJ_VERSION:"..tostring(_VERSION))',
@@ -37,7 +37,7 @@ var CODE = [
   'for k in pairs(_G) do names[#names+1] = tostring(k) end',
   'table.sort(names)',
   'P("INJ_GCOUNT:"..#names)',
-  'local want = {"AssetMgr","PYAssetMgr","ZipAsset","BookAssetMgr","MiscAssetMgr","AppData","GameData","AssetSummary","Asset","UserData","Config","Net","HttpApiMgr","DressMgr","PinyinDataMgr","GlobalData","DataMgr","StoreMgr","VipMgr","PurchaseMgr","LoginMgr","UserManager","Platform"}',
+  'local want = {"AssetMgr","PYAssetMgr","ZipAsset","BookAssetMgr","MiscAssetMgr","AppData","GameData","AssetSummary","UserData","Config","Net","HttpApiMgr","PinyinDataMgr","GlobalData","DataMgr","StoreMgr","VipMgr","PurchaseMgr","LoginMgr","UserManager","Platform","cc","Game","SceneMgr"}',
   'for _,w in ipairs(want) do',
   '  local v = _G[w]',
   '  if v ~= nil then',
@@ -81,39 +81,55 @@ function runInject() {
   }
 }
 
-function arm() {
-  if (!findFns()) return false;
-  if (arm.done) return true;
-  arm.done = true;
-  ['luaL_loadbuffer', 'lua_load', 'luaL_loadfile', 'luaL_loadfilex', 'luaL_loadstring'].forEach(function (n) {
-    var p = null;
-    try { p = mod.findExportByName(n); } catch (e) {}
+function onLuaCall(a, via) {
+  calls++;
+  if (!L) {
+    L = a[0];
+    send({ ev: 'lua_state', via: via, p: L.toString() });
+  }
+  if (injState === 0 && calls > 3) runInject();
+}
+
+function armNow() {
+  if (armed || !findFns()) return;
+  armed = true;
+  ['luaL_loadbuffer', 'luaL_loadbufferx', 'lua_load', 'luaL_loadfile', 'luaL_loadfilex', 'luaL_loadstring', 'lua_pcall'].forEach(function (n) {
+    var p = fns[n];
     if (!p) return;
+    try {
+      Interceptor.attach(p, { onEnter: function (a) { onLuaCall(a, n); } });
+      send({ ev: 'luainject_hooked', sym: n });
+    } catch (e) {
+      send({ ev: 'luainject_hook_err', sym: n, e: String(e) });
+    }
+  });
+  send({ ev: 'luainject_armed' });
+}
+
+// dlopen observer: arm the instant libcocos2dlua becomes visible
+['android_dlopen_ext', 'dlopen', '__loader_dlopen', '__loader_android_dlopen_ext'].forEach(function (sym) {
+  try {
+    var p = Module.getGlobalExportByName(sym);
     Interceptor.attach(p, {
       onEnter: function (a) {
-        calls++;
-        if (!L) {
-          L = a[0];
-          send({ ev: 'lua_state', via: n, p: L.toString() });
-        }
-        if (injState === 0 && calls > 5) {
-          runInject();
+        try { this.pth = a[0].readCString(); } catch (e) { this.pth = ''; }
+      },
+      onLeave: function () {
+        if (this.pth && /cocos2dlua/.test(this.pth)) {
+          send({ ev: 'dl_seen', p: this.pth });
+          armNow();
         }
       }
     });
-    send({ ev: 'luainject_hooked', sym: n });
-  });
-  send({ ev: 'luainject_armed' });
-  return true;
-}
-arm.done = false;
+  } catch (e) {}
+});
 
-var iv = setInterval(arm, 500);
+var iv = setInterval(armNow, 50);
 var ticks = 0;
 var iv2 = setInterval(function () {
   ticks++;
-  if (ticks > 400) { clearInterval(iv2); clearInterval(iv); }
-}, 500);
+  if (ticks > 4000) { clearInterval(iv2); clearInterval(iv); }
+}, 50);
 setTimeout(function () {
-  send({ ev: 'luainject_timeout', calls: calls, hasL: !!L, state: injState });
+  send({ ev: 'luainject_timeout', calls: calls, hasL: !!L, state: injState, armed: armed });
 }, 210000);
