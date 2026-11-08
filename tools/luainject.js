@@ -85,18 +85,23 @@ function arm() {
   if (!findFns()) return false;
   if (arm.done) return true;
   arm.done = true;
-  Interceptor.attach(fns['luaL_loadbuffer'], {
-    onEnter: function (a) {
-      calls++;
-      if (!L) {
-        L = a[0];
-        send({ ev: 'lua_state', p: L.toString(), calls: calls });
+  ['luaL_loadbuffer', 'lua_load', 'luaL_loadfile', 'luaL_loadfilex', 'luaL_loadstring'].forEach(function (n) {
+    var p = null;
+    try { p = mod.findExportByName(n); } catch (e) {}
+    if (!p) return;
+    Interceptor.attach(p, {
+      onEnter: function (a) {
+        calls++;
+        if (!L) {
+          L = a[0];
+          send({ ev: 'lua_state', via: n, p: L.toString() });
+        }
+        if (injState === 0 && calls > 5) {
+          runInject();
+        }
       }
-      if (injState === 0 && calls > 200) {
-        // run after the engine has warmed up, still on the Lua thread
-        runInject();
-      }
-    }
+    });
+    send({ ev: 'luainject_hooked', sym: n });
   });
   send({ ev: 'luainject_armed' });
   return true;
