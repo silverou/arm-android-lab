@@ -1,72 +1,76 @@
 'use strict';
 /*
- * Runtime string scan: the Lua layer is XXTEA-encrypted on disk, but its
- * decrypted chunks live in the app heap. Scan readable rw ranges for the
- * resource URL builder fragments and print surrounding printable context.
+ * Runtime string scan: Lua is XXTEA-encrypted on disk but decrypted in the
+ * heap. Scan rw ranges for builder fragments and dump the printable runs in
+ * a wide window around each hit (catches sibling literals such as the CDN
+ * base host, "/asset/android/" and ".zip" pieces).
  */
-var KWS = [
-  'asset/android',
-  'cos-8-resource',
-  'moduleVersionMd5',
-  'pySwitchCfg',
-  'get_resource_list',
-  'resource-auth',
-  'resource/books'
-];
+var KWS = ['asset/android', 'cos-8-resource', 'moduleVersionMd5', 'pySwitchCfg', 'get_resource_list', 'resource-auth'];
 var seen = {};
-var outN = 0;
-var CAPOUT = 300;
+var total = 0;
+var CAP = 600;
 
-function pat(s) {
-  var h = '';
-  for (var i = 0; i < s.length; i++) {
-    h += s.charCodeAt(i).toString(16).padStart(2, '0') + ' ';
-  }
-  return h.trim();
-}
-
-function ctxAt(addr, len) {
+function printable(bufAddr, len) {
   try {
-    var start = addr.sub(120);
-    var buf = start.readByteArray(120 + len + 200);
-    var arr = new Uint8Array(buf);
-    var s = '';
+    var arr = new Uint8Array(bufAddr.readByteArray(len));
+    var runs = [];
+    var cur = '';
     for (var i = 0; i < arr.length; i++) {
       var c = arr[i];
-      s += (c >= 32 && c < 127) ? String.fromCharCode(c) : '.';
+      if (c >= 32 && c < 127) {
+        cur += String.fromCharCode(c);
+      } else {
+        if (cur.length >= 8) runs.push(cur);
+        cur = '';
+      }
     }
-    return s;
+    if (cur.length >= 8) runs.push(cur);
+    return runs;
   } catch (e) {
-    return '';
+    return [];
   }
 }
 
 function scanKw(kw) {
-  if (outN >= CAPOUT) return;
-  var p = pat(kw);
+  if (total >= CAP) return;
+  var h = '';
+  for (var i = 0; i < kw.length; i++) h += kw.charCodeAt(i).toString(16).padStart(2, '0') + ' ';
+  h = h.trim();
   var ranges = Process.enumerateRanges('rw-');
-  for (var ri = 0; ri < ranges.length && outN < CAPOUT; ri++) {
+  for (var ri = 0; ri < ranges.length && total < CAP; ri++) {
     var r = ranges[ri];
     if (r.size > 512 * 1024 * 1024) continue;
     try {
-      var matches = Memory.scanSync(r.base, r.size, p);
-      for (var mi = 0; mi < matches.length && outN < CAPOUT; mi++) {
-        var m = matches[mi];
-        var c = ctxAt(m.address, kw.length);
-        var key = c.slice(60, 220);
-        if (seen[key]) continue;
-        seen[key] = 1;
-        outN++;
-        send({ ev: 'hit', kw: kw, addr: m.address.toString(), ctx: c });
+      var ms = Memory.scanSync(r.base, r.size, h);
+      for (var mi = 0; mi < ms.length && total < CAP; mi++) {
+        var addr = ms[mi].address;
+        var start = addr.sub(4000);
+        if (start.compare(r.base) < 0) start = r.base;
+        var span = addr.add(kw.length + 4000).sub(start);
+        var len = Number(span);
+        if (len > 10000) len = 10000;
+        var runs = printable(start, len);
+        var keep = [];
+        runs.forEach(function (s) {
+          if (s.length < 10) return;
+          if (!/http|asset|zip|resource|\.json|ihumand|ihuman|%s/.test(s)) return;
+          if (seen[s]) return;
+          seen[s] = 1;
+          keep.push(s);
+        });
+        if (keep.length) {
+          total += keep.length;
+          send({ ev: 'srclit', kw: kw, addr: addr.toString(), n: keep.length, items: keep.slice(0, 40) });
+        }
       }
     } catch (e) {}
   }
 }
 
 function run() {
-  send({ ev: 'scan_start', mods: Process.enumerateModules().length });
+  send({ ev: 'scan_start' });
   KWS.forEach(scanKw);
-  send({ ev: 'scan_done', total: outN });
+  send({ ev: 'scan_done', total: total });
 }
 
 setTimeout(run, 20000);
