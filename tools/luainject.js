@@ -51,6 +51,23 @@ var CODE = [
   '  end',
   'end',
   'P("INJ_NAMES:"..table.concat(names, ",", 1, math.min(#names, 240)))',
+  'if package and package.loaded then',
+  '  local mods = {}',
+  '  for k in pairs(package.loaded) do mods[#mods+1] = tostring(k) end',
+  '  table.sort(mods)',
+  '  P("INJ_MODS:"..table.concat(mods, ",", 1, math.min(#mods, 200)))',
+  '  for _,m in ipairs(mods) do',
+  '    if m:find("asset") or m:find("purchase") or m:find("user") or m:find("store") or m:find("login") or m:find("vip") then',
+  '      local t = package.loaded[m]',
+  '      if type(t) == "table" then',
+  '        local ks = {}',
+  '        for k in pairs(t) do ks[#ks+1] = tostring(k) end',
+  '        table.sort(ks)',
+  '        P("INJ_MKEYS:"..m..":"..table.concat(ks, ",", 1, math.min(#ks, 80)))',
+  '      end',
+  '    end',
+  '  end',
+  'end',
   'for _,s in ipairs(out) do print(s) end'
 ].join('\n');
 
