@@ -303,7 +303,7 @@ jobs:
           echo "using FRIDA_DEVICE=$FRIDA_DEVICE"
           sudo docker exec redroid /system/bin/sh -c 'rm -f /data/local/tmp/lc1.log' || true
           sudo docker exec -d redroid /system/bin/logcat -f /data/local/tmp/lc1.log -v time || true
-          echo "--- v77 tapper: startup taps then enter lesson tiles ---"
+          echo "--- v78 tapper: startup taps, open lesson, close intro, tap level bubbles ---"
           ( for i in $(seq 1 5); do
               tools/gx.sh "input tap 1108 402" >/dev/null 2>&1 || true
               sleep 1
@@ -315,22 +315,34 @@ jobs:
             sleep 55
             echo "TAP lesson tile 1" >&2
             tools/gx.sh "input tap 320 310" >/dev/null 2>&1 || true
-            sleep 10
+            sleep 8
+            echo "TAP close intro" >&2
+            tools/gx.sh "input tap 1112 113" >/dev/null 2>&1 || true
+            sleep 6
+            echo "TAP level bubble on pedestal" >&2
+            tools/gx.sh "input tap 300 467" >/dev/null 2>&1 || true
+            sleep 12
             tools/gx.sh "screencap -p /data/local/tmp/t1.png" >/dev/null 2>&1 || true
             sudo docker exec redroid /system/bin/cat /data/local/tmp/t1.png > t1.png 2>/dev/null || true
-            tools/gx.sh "input tap 1112 113" >/dev/null 2>&1 || true
-            sleep 4
-            echo "TAP lesson tile 2" >&2
-            tools/gx.sh "input tap 620 310" >/dev/null 2>&1 || true
-            sleep 10
+            echo "TAP level bubble low-left" >&2
+            tools/gx.sh "input tap 163 580" >/dev/null 2>&1 || true
+            sleep 12
             tools/gx.sh "screencap -p /data/local/tmp/t2.png" >/dev/null 2>&1 || true
             sudo docker exec redroid /system/bin/cat /data/local/tmp/t2.png > t2.png 2>/dev/null || true
+            echo "TAP level bubble mid-left" >&2
+            tools/gx.sh "input tap 210 578" >/dev/null 2>&1 || true
+            sleep 12
+            tools/gx.sh "screencap -p /data/local/tmp/t3.png" >/dev/null 2>&1 || true
+            sudo docker exec redroid /system/bin/cat /data/local/tmp/t3.png > t3.png 2>/dev/null || true
             echo "TAP next page arrow" >&2
             tools/gx.sh "input tap 1218 668" >/dev/null 2>&1 || true
             sleep 10
-            echo "TAP play tile again" >&2
             tools/gx.sh "input tap 320 310" >/dev/null 2>&1 || true
-            sleep 15
+            sleep 10
+            tools/gx.sh "input tap 1112 113" >/dev/null 2>&1 || true
+            sleep 8
+            tools/gx.sh "input tap 640 400" >/dev/null 2>&1 || true
+            sleep 20
           ) &
           TAPPER=$!
           echo "--- host tcpdump during attempt1 (dns+sni) ---"
@@ -339,7 +351,7 @@ jobs:
           echo "--- UI sequence screenshots (every 20s) ---"
           ( n=0; while [ $n -lt 12 ]; do sleep 20; n=$((n+1)); tools/gx.sh "screencap -p /data/local/tmp/sq$n.png" >/dev/null 2>&1 || true; sudo docker exec redroid /system/bin/cat "/data/local/tmp/sq$n.png" > "sq$n.png" 2>/dev/null || true; done ) &
           SEQP=$!
-          DEATH_TAG=att1 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js > hook_out.txt 2>&1 || true
+          DEATH_TAG=att1 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js > hook_out.txt 2>&1 || true
           kill $TAPPER $SEQP 2>/dev/null || true
           kill $TCPD 2>/dev/null || true
           echo "--- mitm flows dump ---"
@@ -398,7 +410,7 @@ jobs:
                 sleep 1
               done ) &
             TAPPER=$!
-            DEATH_TAG=att2 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js > hook_out2.txt 2>&1 || true
+            DEATH_TAG=att2 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js > hook_out2.txt 2>&1 || true
             kill $TAPPER 2>/dev/null || true
             echo "===== hook_out attempt2 (v66) ====="
             tail -40 hook_out2.txt || true
@@ -450,6 +462,7 @@ jobs:
             sq*.png
             t1.png
             t2.png
+            t3.png
           if-no-files-found: warn
 
       - name: cleanup
