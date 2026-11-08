@@ -1,62 +1,70 @@
 'use strict';
 /*
- * Dump URL literals out of Lua chunk loads: the Lua scripts arrive at
- * luaL_loadbuffer already decrypted, so any URL template literal (e.g. the
- * resource-zip builder) becomes visible here even when the final string is
- * assembled at runtime.
+ * Dump interesting literals out of Lua chunk loads. Chunks are often Lua
+ * bytecode with embedded nulls, so read raw bytes and scan as latin1.
+ * Captures: absolute URLs, plus any literal around "asset"/"resource"/".zip"
+ * fragments so the runtime-built download template becomes visible.
  */
 var seen = {};
 var total = 0;
-var CAP = 800;
+var CAP = 4000;
 var hooked = {};
 
-function tryHook(mod, name) {
-  try {
-    if (hooked[name]) return true;
-    var p = mod.findExportByName(name);
-    if (!p) return false;
-    hooked[name] = true;
-    var isLoad = name === 'lua_load';
-    Interceptor.attach(p, {
-      onEnter: function (a) {
-        if (total >= CAP) return;
-        try {
-          var buf, sz;
-          if (isLoad) return; // lua_load uses a reader callback; skip
-          buf = a[1];
-          sz = a[2].toUInt32();
-          if (sz < 16 || sz > 8 * 1024 * 1024) return;
-          var txt = buf.readUtf8String(Math.min(sz, 2 * 1024 * 1024)) || '';
-          if (txt.length < 16) return;
-          var urls = txt.match(/https?:\/\/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]{8,300}/g);
-          if (!urls) return;
-          var uniq = [];
-          urls.forEach(function (u) {
-            if (!seen[u]) { seen[u] = 1; uniq.push(u); }
-          });
-          if (!uniq.length) return;
-          total += uniq.length;
-          send({ ev: 'lua_url', n: uniq.length, urls: uniq.slice(0, 40) });
-        } catch (e) {}
-      }
-    });
-    send({ ev: 'luadump_hook', sym: name, mod: mod.name });
-    return true;
-  } catch (e) {
-    return false;
+function harvest(txt, who) {
+  var out = [];
+  var reUrl = /https?:\/\/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%\-]{8,300}/g;
+  var m;
+  while ((m = reUrl.exec(txt))) {
+    if (!seen[m[0]]) { seen[m[0]] = 1; out.push(m[0]); }
   }
+  var reFrag = /[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%\-]{0,60}(?:asset\/|resource|\.zip)[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%\-]{0,80}/g;
+  while ((m = reFrag.exec(txt))) {
+    var s = m[0];
+    if (s.length < 10) continue;
+    if (!seen[s]) { seen[s] = 1; out.push(s); }
+  }
+  if (out.length) {
+    total += out.length;
+    send({ ev: 'lua_lit', who: who, n: out.length, items: out.slice(0, 60) });
+  }
+}
+
+function attach(p, name) {
+  Interceptor.attach(p, {
+    onEnter: function (a) {
+      if (total >= CAP) return;
+      try {
+        var which = name;
+        if (which === 'lua_load') return;
+        var buf = a[1];
+        var sz = a[2].toUInt32();
+        if (sz < 16 || sz > 8 * 1024 * 1024) return;
+        var raw = new Uint8Array(buf.readByteArray(Math.min(sz, 4 * 1024 * 1024)));
+        var s = '';
+        for (var i = 0; i < raw.length; i++) s += String.fromCharCode(raw[i]);
+        harvest(s, which);
+      } catch (e) {}
+    }
+  });
+  send({ ev: 'luadump_hook', sym: name });
 }
 
 function arm() {
   Process.enumerateModules().forEach(function (m) {
-    ['luaL_loadbuffer', 'luaL_loadbufferx'].forEach(function (n) { tryHook(m, n); });
+    ['luaL_loadbuffer', 'luaL_loadbufferx'].forEach(function (n) {
+      if (hooked[n]) return;
+      try {
+        var p = m.findExportByName(n);
+        if (p) { hooked[n] = 1; attach(p, n); }
+      } catch (e) {}
+    });
   });
 }
 
 var iv = setInterval(arm, 1000);
 var ticks = 0;
-var iv2 = setInterval(function () {
+setInterval(function () {
   ticks++;
-  if (ticks > 300) { clearInterval(iv2); clearInterval(iv); }
+  if (ticks > 200) clearInterval(iv);
 }, 1000);
-setTimeout(function () { send({ ev: 'luadump_done', total: total, syms: Object.keys(hooked) }); }, 200000);
+setTimeout(function () { send({ ev: 'luadump_done', total: total, syms: Object.keys(hooked) }); }, 180000);
