@@ -351,7 +351,7 @@ jobs:
           echo "--- UI sequence screenshots (every 20s) ---"
           ( n=0; while [ $n -lt 12 ]; do sleep 20; n=$((n+1)); tools/gx.sh "screencap -p /data/local/tmp/sq$n.png" >/dev/null 2>&1 || true; sudo docker exec redroid /system/bin/cat "/data/local/tmp/sq$n.png" > "sq$n.png" 2>/dev/null || true; done ) &
           SEQP=$!
-          DEATH_TAG=att1 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/luainject.js > hook_out.txt 2>&1 || true
+          DEATH_TAG=att1 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js > hook_out.txt 2>&1 || true
           kill $TAPPER $SEQP 2>/dev/null || true
           kill $TCPD 2>/dev/null || true
           echo "--- mitm flows dump ---"
@@ -410,7 +410,7 @@ jobs:
                 sleep 1
               done ) &
             TAPPER=$!
-            DEATH_TAG=att2 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/luainject.js > hook_out2.txt 2>&1 || true
+            DEATH_TAG=att2 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js > hook_out2.txt 2>&1 || true
             kill $TAPPER 2>/dev/null || true
             echo "===== hook_out attempt2 (v66) ====="
             tail -40 hook_out2.txt || true
