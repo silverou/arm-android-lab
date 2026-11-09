@@ -275,20 +275,6 @@ var luaL = null, luaFns = {}, luaCalls = 0, luaInj = 0, luaArmed = false;
 var LUA_CODE = [
   'local out = {}',
   'local function P(s) out[#out+1] = s end',
-  'local function keys(t)',
-  '  if type(t) ~= "table" then return type(t) end',
-  '  local ks = {}',
-  '  for k in pairs(t) do ks[#ks+1] = tostring(k) end',
-  '  table.sort(ks)',
-  '  return table.concat(ks, ",", 1, math.min(#ks, 60))',
-  'end',
-  'local function call(tbl, fn)',
-  '  if type(tbl) ~= "table" or type(tbl[fn]) ~= "function" then return "NOFN" end',
-  '  local ok, r = pcall(function() return tbl[fn](tbl) end)',
-  '  if not r and not ok then return "ERR"..tostring(r) end',
-  '  if type(r) == "table" then return "table:"..keys(r) end',
-  '  return tostring(r)',
-  'end',
   'local g = {}',
   'for k,v in pairs(_G) do g[k] = v end',
   'local UD = g.UserData',
@@ -300,51 +286,49 @@ var LUA_CODE = [
   '  if type(db) == "userdata" then',
   '    local ok, r = pcall(function() return db:execute("UPDATE UserModel SET allpack_flag=1, tmp_allpack_flag=1, allpack_childlink_flag=1, vip_purchased_flag=1, vip_type=1, vip_continuous=1, vip_start_ts=1790000000, vip_end_ts=4102416000, vip_trial_flag=1") end)',
   '    P("UPDATE="..tostring(ok)..":"..tostring(r))',
-  '  else P("nodb") end',
-  'end',
-  'local VM = g.VipManager',
-  'if type(VM) == "table" then',
-  '  local c = VM.class or VM',
-  '  for _,fn in ipairs({"hasAllPack","isValidVip","isMoneyVip"}) do',
-  '    if type(c[fn]) == "function" then',
-  '      local ok, r = pcall(function() return c[fn](VM) end)',
-  '      P("VIP."..fn.."="..tostring(ok)..":"..tostring(r))',
-  '    end',
   '  end',
   'end',
-  'local LM = g.LoginManager',
-  'P("ID.accountID="..call(LM, "getAccountID"))',
-  'P("ID.userID="..call(LM, "getUserId"))',
-  'local IH = g.IHumanManager',
-  'P("ID.deviceId="..call(IH, "getDeviceId"))',
-  'P("ID.userId="..call(IH, "getUserId"))',
-  'P("ID.sn="..call(IH, "getSN"))',
-  'P("ID.userType="..call(IH, "getUserType"))',
-  'P("ID.utoken="..call(LM, "getUToken"))',
-  'P("ID.session="..call(LM, "getSession"))',
+  'local ids = {{"battle_01","95ab5da08290ae9e28db213f0d1c6a92"},{"book_S1E01","8dfb6dd51de0a58f6e0bb372fbd14ea7"},{"difficult_game_1","1638005fcdd9cc65231b5a7dbc733819"},{"exercise_01","378d0d67576d92a21409dd53af1f2ecf"},{"linkagegames_balloon","454f5c7b3569a4beba86709b1eb6673a"},{"practice_01","b619b9bd835032601c6c3ca74b0449ce"},{"say_template_1","45c7fcc914bc25fafc3f0d4649f49d06"},{"shizi_book","717348862d528b7bad31214d3858d931"},{"spell_template_1","78a8ae84db84e20d82aa94dd863162b8"},{"template1","2493b0c6f01e56add2d8526f18ca2606"},{"tone_roller_coaster_1","fc18bee171f2e037bc8f2a5e09ace47c"},{"ui_o_explain","7e279b835a0c99e360c64f632047af21"},{"write_templet_02","9864117e3f0a09e3f5f7f77dfa9188a7"},{"PY002","a99fde54ff5f404d04e04be2f59b0d30"}}',
   'local AM = g.AssetMgr',
   'if type(AM) == "table" then',
-  '  local ok, r = pcall(function() return AM:download("PY002") end)',
-  '  P("DL.PY002="..tostring(ok)..":"..type(r))',
-  '  local ok2, a = pcall(function() return AM:getAsset("PY002") end)',
-  '  if ok2 and type(a) == "table" then',
-  '    local ok3, st = pcall(function() return a:getState() end)',
-  '    P("DL.state="..tostring(st))',
-  '    if a.url ~= nil then P("DL.url="..tostring(a.url)) end',
+  '  for _,pair in ipairs(ids) do',
+  '    local id, md5 = pair[1], pair[2]',
+  '    local ok, a = pcall(function() return AM:getAsset(id) end)',
+  '    if ok and type(a) == "table" then',
+  '      local ok2, r2 = pcall(function() return a:download() end)',
+  '      P("TRIG."..id.."="..tostring(ok2)..":"..type(r2))',
+  '    else',
+  '      P("TRIG."..id.."=GETFAIL:"..tostring(a))',
+  '    end',
   '  end',
   'end',
   'return table.concat(out, string.char(10))'
 ].join('\n');
 
-function findAny(name) {
-  var mods = [];
-  try { mods = Process.enumerateModules(); } catch (e) { return null; }
-  try { var g = Module.getGlobalExportByName(name); if (g && !g.isNull()) return g; } catch (e) {}
-  for (var i = 0; i < mods.length; i++) {
-    try { var q = mods[i].findExportByName(name); if (q && !q.isNull()) return q; } catch (e) {}
-  }
-  return null;
-}
+var LUA_CODE2 = [
+  'local out = {}',
+  'local function P(s) out[#out+1] = s end',
+  'local g = {}',
+  'for k,v in pairs(_G) do g[k] = v end',
+  'local ids = {{"battle_01","95ab5da08290ae9e28db213f0d1c6a92"},{"book_S1E01","8dfb6dd51de0a58f6e0bb372fbd14ea7"},{"difficult_game_1","1638005fcdd9cc65231b5a7dbc733819"},{"exercise_01","378d0d67576d92a21409dd53af1f2ecf"},{"linkagegames_balloon","454f5c7b3569a4beba86709b1eb6673a"},{"practice_01","b619b9bd835032601c6c3ca74b0449ce"},{"say_template_1","45c7fcc914bc25fafc3f0d4649f49d06"},{"shizi_book","717348862d528b7bad31214d3858d931"},{"spell_template_1","78a8ae84db84e20d82aa94dd863162b8"},{"template1","2493b0c6f01e56add2d8526f18ca2606"},{"tone_roller_coaster_1","fc18bee171f2e037bc8f2a5e09ace47c"},{"ui_o_explain","7e279b835a0c99e360c64f632047af21"},{"write_templet_02","9864117e3f0a09e3f5f7f77dfa9188a7"},{"PY002","a99fde54ff5f404d04e04be2f59b0d30"}}',
+  'local AM = g.AssetMgr',
+  'if type(AM) == "table" then',
+  '  for _,pair in ipairs(ids) do',
+  '    local id = pair[1]',
+  '    local ok, a = pcall(function() return AM:getAsset(id) end)',
+  '    if ok and type(a) == "table" then',
+  '      local st = nil',
+  '      local ok2, r2 = pcall(function() return a:getState() end)',
+  '      if ok2 then st = r2 end',
+  '      local url = a.url',
+  '      P("HARVEST."..id..".state="..tostring(st)..".url="..tostring(url))',
+  '    else',
+  '      P("HARVEST."..id..".=NOASSET:"..tostring(a))',
+  '    end',
+  '  end',
+  'end',
+  'return table.concat(out, string.char(10))'
+].join('\n');
 
 function luaResolve() {
   ['luaL_loadbuffer', 'luaL_loadbufferx', 'lua_load', 'luaL_loadfile', 'luaL_loadstring', 'lua_pcall', 'lua_tolstring'].forEach(function (n) {
@@ -376,6 +360,10 @@ function luaRunInject() {
           var len = szp.readU64().toNumber();
           var txt = ps.readUtf8String(Math.min(len, 60000)) || '';
           emit({ ev: 'inj_out', len: len, txt: txt });
+          if (!harvestScheduled) {
+            harvestScheduled = true;
+            setTimeout(function () { try { luaRunInject2(); } catch (e) { emit({ ev: 'inj2_sch_err', e: String(e) }); } }, 70000);
+          }
         } else {
           emit({ ev: 'inj_nostr', rc: rc });
         }
@@ -383,6 +371,38 @@ function luaRunInject() {
     }
   } catch (e) {
     emit({ ev: 'inj_exc', e: String(e) });
+  }
+}
+
+var harvestScheduled = false;
+function luaRunInject2() {
+  if (luaInj >= 2 || !luaStatePtr) return;
+  luaInj = 2;
+  try {
+    var codeStr = Memory.allocUtf8String(LUA_CODE2);
+    var fnLoad = new NativeFunction(luaFns['luaL_loadbuffer'], 'int', ['pointer', 'pointer', 'size_t', 'pointer']);
+    var fnPcall = new NativeFunction(luaFns['lua_pcall'], 'int', ['pointer', 'int', 'int', 'int']);
+    var nm = Memory.allocUtf8String('=frida_harvest');
+    var r = fnLoad(luaStatePtr, codeStr, LUA_CODE2.length, nm);
+    emit({ ev: 'inj2_load', r: r });
+    if (r === 0) {
+      var rc = fnPcall(luaStatePtr, 0, 1, 0);
+      emit({ ev: 'inj2_pcall', rc: rc });
+      try {
+        var fnToStr = new NativeFunction(luaFns['lua_tolstring'], 'pointer', ['pointer', 'int', 'pointer']);
+        var szp = Memory.alloc(8);
+        var ps = fnToStr(luaStatePtr, -1, szp);
+        if (!ps.isNull()) {
+          var len = szp.readU64().toNumber();
+          var txt = ps.readUtf8String(Math.min(len, 60000)) || '';
+          emit({ ev: 'inj2_out', len: len, txt: txt });
+        } else {
+          emit({ ev: 'inj2_nostr', rc: rc });
+        }
+      } catch (e2) { emit({ ev: 'inj2_read_err', e: String(e2) }); }
+    }
+  } catch (e) {
+    emit({ ev: 'inj2_exc', e: String(e) });
   }
 }
 
