@@ -287,7 +287,7 @@ var LUA_CODE = [
   '  table.sort(mods)',
   '  P("INJ_MODS:"..table.concat(mods, ",", 1, math.min(#mods, 200)))',
   '  for _,m in ipairs(mods) do',
-  '    if m:find("asset") or m:find("purchase") or m:find("user") or m:find("store") or m:find("vip") then',
+  '    if m:find("asset") or m:find("purchase") or m:find("user") or m:find("store") or m:find("vip") or m:find("pay") then',
   '      local t = package.loaded[m]',
   '      if type(t) == "table" then',
   '        local ks = {}',
@@ -301,16 +301,17 @@ var LUA_CODE = [
   'for _,s in ipairs(out) do print(s) end'
 ].join('\n');
 
-function luaResolve() {
+function findAny(name) {
   var mods = [];
-  try { mods = Process.enumerateModules(); } catch (e) { return false; }
-  function findAny(name) {
-    try { var g = Module.getGlobalExportByName(name); if (g && !g.isNull()) return g; } catch (e) {}
-    for (var i = 0; i < mods.length; i++) {
-      try { var q = mods[i].findExportByName(name); if (q && !q.isNull()) return q; } catch (e) {}
-    }
-    return null;
+  try { mods = Process.enumerateModules(); } catch (e) { return null; }
+  try { var g = Module.getGlobalExportByName(name); if (g && !g.isNull()) return g; } catch (e) {}
+  for (var i = 0; i < mods.length; i++) {
+    try { var q = mods[i].findExportByName(name); if (q && !q.isNull()) return q; } catch (e) {}
   }
+  return null;
+}
+
+function luaResolve() {
   ['luaL_loadbuffer', 'luaL_loadbufferx', 'lua_load', 'luaL_loadfile', 'luaL_loadstring', 'lua_pcall', 'lua_tolstring'].forEach(function (n) {
     if (luaFns[n]) return;
     var q = findAny(n);
@@ -332,14 +333,18 @@ function luaRunInject() {
     if (r === 0) {
       var rc = fnPcall(luaStatePtr, 0, 0, 0);
       emit({ ev: 'inj_pcall', rc: rc });
-      if (rc !== 0) {
-        try {
-          var fnToStr = new NativeFunction(luaFns['lua_tolstring'], 'pointer', ['pointer', 'int', 'pointer']);
-          var szp = Memory.alloc(4);
-          var ps = fnToStr(luaStatePtr, -1, szp);
-          if (!ps.isNull()) emit({ ev: 'inj_err', msg: ps.readUtf8String() });
-        } catch (e) {}
-      }
+      try {
+        var fnToStr = new NativeFunction(luaFns['lua_tolstring'], 'pointer', ['pointer', 'int', 'pointer']);
+        var szp = Memory.alloc(8);
+        var ps = rc === 0 ? fnToStr(luaStatePtr, -1, szp) : ptr(0);
+        if (!ps.isNull()) {
+          var len = szp.readU64().toNumber();
+          var txt = ps.readUtf8String(Math.min(len, 60000)) || '';
+          emit({ ev: 'inj_out', len: len, txt: txt });
+        } else {
+          emit({ ev: 'inj_nostr', rc: rc });
+        }
+      } catch (e2) { emit({ ev: 'inj_read_err', e: String(e2) }); }
     }
   } catch (e) {
     emit({ ev: 'inj_exc', e: String(e) });
@@ -398,6 +403,18 @@ function armLua() {
       } catch (e2) {}
     }
   } catch (e3) {}
+  try {
+    var fx = findAny('_ZN7cocos2d8LuaStack17executeScriptFileEPKc');
+    if (fx && !fx.isNull()) {
+      Interceptor.attach(fx, {
+        onEnter: function (a) {
+          try { this.fp = a[1].readCString(); } catch (e) { this.fp = '?'; }
+          if (luaInj === 0 && luaStatePtr) { emit({ ev: 'execfile', f: this.fp }); luaRunInject(); }
+        }
+      });
+      emit({ ev: 'lua_hooked', sym: 'executeScriptFile' });
+    }
+  } catch (e4) { emit({ ev: 'lua_hook_err', sym: 'executeScriptFile', e: String(e4) }); }
   emit({ ev: 'lua_armed' });
 }
 var luaStateSlot = null;
@@ -415,10 +432,10 @@ setInterval(function () {
       emit({ ev: 'lua_state', via: 's_luaState', p: p.toString() });
       // only inject from the Lua thread (hooks above); if no hook ever
       // fired, last-resort injection from JS after a 15s grace period
-      if (luaInj === 0 && !ljArmed && luaCalls === 0) {
+      if (luaInj === 0 && luaCalls === 0) {
         setTimeout(function () {
           if (luaInj === 0 && luaStatePtr && luaCalls === 0) luaRunInject();
-        }, 15000);
+        }, 8000);
       }
     }
   } catch (e) {}
