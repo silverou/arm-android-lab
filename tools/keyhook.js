@@ -298,7 +298,7 @@ var LUA_CODE = [
   '    end',
   '  end',
   'end',
-  'for _,s in ipairs(out) do print(s) end'
+  'return table.concat(out, string.char(10))'
 ].join('\n');
 
 function findAny(name) {
