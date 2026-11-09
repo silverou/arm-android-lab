@@ -425,6 +425,12 @@ jobs:
             tools/gx.sh "logcat -d -v time" > logcat_att2.txt 2>/dev/null || true
             sudo dmesg 2>/dev/null | tail -40 > dmesg_host2.txt || true
           fi
+          echo "--- final mitm dump (post attempt2) ---"
+          cp flows.txt flows1.txt 2>/dev/null || true
+          python3 tools/flows_dump.py || true
+          cp flows.txt flows2.txt 2>/dev/null || true
+          cp /tmp/flows.mitm flows.mitm 2>/dev/null || true
+          ls -la flows1.txt flows2.txt flows.mitm 2>/dev/null || true
           echo "===== crash markers ====="
           tools/gx.sh "logcat -d -v time" > logcat_frida.txt 2>/dev/null || true
           grep -aE "0xdead|Fatal signal" logcat_frida.txt | grep -av launcher3 | grep -av systemui | tail -10 || true
@@ -453,6 +459,8 @@ jobs:
             lc2.txt
             tcp1.txt
             flows.txt
+            flows1.txt
+            flows2.txt
             flows.mitm
             ipt1.txt
             mitm1.log
