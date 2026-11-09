@@ -330,6 +330,16 @@ var LUA_CODE2 = [
   'return table.concat(out, string.char(10))'
 ].join('\n');
 
+function findAny(name) {
+  var mods = [];
+  try { mods = Process.enumerateModules(); } catch (e) { return null; }
+  try { var g = Module.getGlobalExportByName(name); if (g && !g.isNull()) return g; } catch (e) {}
+  for (var i = 0; i < mods.length; i++) {
+    try { var q = mods[i].findExportByName(name); if (q && !q.isNull()) return q; } catch (e) {}
+  }
+  return null;
+}
+
 function luaResolve() {
   ['luaL_loadbuffer', 'luaL_loadbufferx', 'lua_load', 'luaL_loadfile', 'luaL_loadstring', 'lua_pcall', 'lua_tolstring'].forEach(function (n) {
     if (luaFns[n]) return;
