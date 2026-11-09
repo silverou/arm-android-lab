@@ -368,8 +368,61 @@ function armLua() {
       emit({ ev: 'lua_hooked', sym: n });
     } catch (e) { emit({ ev: 'lua_hook_err', sym: n, e: String(e) }); }
   });
+  // v84: LuaJavaBridge proves Lua runs (callJavaStaticMethod logged at start).
+  // s_luaState is the static global holding the state pointer.
+  try {
+    var mods = Process.enumerateModules();
+    for (var i = 0; i < mods.length; i++) {
+      try {
+        var ps = mods[i].findExportByName('_ZN13LuaJavaBridge10s_luaStateE');
+        if ((!ps || ps.isNull()) && /libcocos2dlua/.test(mods[i].name || '')) {
+          // fallback: symtab value is image vaddr (ET_DYN, load base vaddr 0)
+          ps = mods[i].base.add(0x25f9cd8);
+        }
+        if (ps && !ps.isNull()) { luaStateSlot = ps; emit({ ev: 'lua_state_slot', p: ps.toString(), mod: mods[i].name }); }
+        var pj = mods[i].findExportByName('_ZN13LuaJavaBridge20callJavaStaticMethodEP9lua_State');
+        if (pj && !pj.isNull() && !ljArmed) {
+          ljArmed = true;
+          Interceptor.attach(pj, {
+            onEnter: function (a) {
+              luaCalls++;
+              if (!luaStatePtr) {
+                luaStatePtr = a[0];
+                emit({ ev: 'lua_state', via: 'callJavaStaticMethod', p: luaStatePtr.toString() });
+              }
+              if (luaInj === 0 && luaCalls > 3) luaRunInject();
+            }
+          });
+          emit({ ev: 'lua_hooked', sym: 'callJavaStaticMethod' });
+        }
+      } catch (e2) {}
+    }
+  } catch (e3) {}
   emit({ ev: 'lua_armed' });
 }
+var luaStateSlot = null;
+var ljArmed = false;
+
+// poll the static slot too (works even before any hook fires)
+var slotSeenAt = 0;
+setInterval(function () {
+  if (!luaStateSlot || luaStatePtr) return;
+  try {
+    var p = luaStateSlot.readPointer();
+    if (!p.isNull()) {
+      luaStatePtr = p;
+      slotSeenAt = Date.now();
+      emit({ ev: 'lua_state', via: 's_luaState', p: p.toString() });
+      // only inject from the Lua thread (hooks above); if no hook ever
+      // fired, last-resort injection from JS after a 15s grace period
+      if (luaInj === 0 && !ljArmed && luaCalls === 0) {
+        setTimeout(function () {
+          if (luaInj === 0 && luaStatePtr && luaCalls === 0) luaRunInject();
+        }, 15000);
+      }
+    }
+  } catch (e) {}
+}, 500);
 
 // try now, then poll until libcocos2dlua.so is loaded (up to 180s)
 var tries = 0;
