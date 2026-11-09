@@ -304,7 +304,7 @@ var LUA_CODE = [
   '  local c = VM.class or VM',
   '  for _,fn in ipairs({"hasAllPack","isValidVip","isTrailVip","isLimitVip","isMoneyVip","hasChildlink"}) do',
   '    if type(c[fn]) == "function" then',
-  '      local ok, r = pcall(function() return c[fn]() end)',
+  '      local ok, r = pcall(function() return c[fn](VM) end)',
   '      P(tag.."."..fn.."="..tostring(ok)..":"..tostring(r))',
   '    end',
   '  end',
