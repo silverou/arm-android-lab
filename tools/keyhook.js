@@ -295,7 +295,7 @@ var LUA_CODE = [
   '    local id, md5 = pair[1], pair[2]',
   '    local ok, a = pcall(function() return AM:getAsset(id) end)',
   '    if ok and type(a) == "table" then',
-  '      local ok2, r2 = pcall(function() return AM:auth(a) end)',
+  '      local ok2, r2 = pcall(function() return a:download() end)',
   '      P("TRIG."..id.."="..tostring(ok2)..":"..type(r2))',
   '    else',
   '      P("TRIG."..id.."=GETFAIL:"..tostring(a))',
