@@ -288,6 +288,28 @@ var LUA_CODE = [
   '    P("UPDATE="..tostring(ok)..":"..tostring(r))',
   '  end',
   'end',
+  'local ids = {{"battle_01","95ab5da08290ae9e28db213f0d1c6a92"},{"battle_02","bac84a649a584147a79912bcbbc5b531"},{"battle_03","4a6af575f88b6ae96263fbcb9538fbd5"},{"battle_04","06ed17150f5fb0ac06f298dfbe5136e2"},{"book_S1E01","8dfb6dd51de0a58f6e0bb372fbd14ea7"},{"book_S1E06","a6f902e811a7cae9303cd6b62140d9ea"},{"book_S1E11","8fc320b88bed788a771c5ba2a8fbc166"},{"book_S1E17","07d31cd63b0b4dcde8a11c4546403ebb"},{"book_S1E22","77cb02e747a54adfc2c30231111bd214"},{"book_S1E28","7edec04985779bf2915c3709f011bb00"},{"childlink_v2","10ffa58d61da2294edbbcced1f51c68d"},{"childlink_v2_math_q_6666","3f3e93f2fc69396a5b06cff879c5ece5"},{"childlink_v2_pinyin_q_0178","58ed1c0bb1ce43d6fb6a6265afd5e444"},{"childlink_v2_pinyin_q_0549","5baa4f72eba02e05033ef479659d5ffa"},{"childlink_v2_shizi_q_5867","6e54567f44dc8e5b66979ce514f730ea"},{"childlink_v2_shizi_q_6287","aa01d68635ee0b2b88c6f9483f6b853e"},{"difficult_game_1","1638005fcdd9cc65231b5a7dbc733819"},{"difficult_game_6","0af063a72a2653d3fe0bccbeedceb1f6"},{"dinosaur_10","351e195a804e038347102088b967a673"},{"dinosaur_21","87f585e3409a6a624917ab3702873f5a"},{"dinosaur_28","579f019be3cebc30a0a6fc4d5fc087e2"},{"dinosaur_99","808c435fb2ec9f7342e799f3d155ba93"},{"exercise_01","378d0d67576d92a21409dd53af1f2ecf"},{"exercise_02","441bf0c32fb273f61efe52dffe4fd695"},{"exercise_03","1822352798bccbd651437a7eac5559c1"},{"exp_class_write","2805ec304509e6e4e619f17beb7cf71c"},{"linkagegames_balloon","454f5c7b3569a4beba86709b1eb6673a"},{"linkagegames_common","552bb4d21fb543b4d79be29676f273d4"},{"linkagegames_gift","da2075d664042fe1d17ca02bcf85a985"},{"linkagegames_snowfield","d14cf83fb04accd3237efc6a9b085037"},{"practice_01","b619b9bd835032601c6c3ca74b0449ce"},{"practice_02","925e6c196add37e07dda21aae9db8c4b"},{"practice_04","7218f566b726af8ff14bdea996e2ffba"},{"practice_06","e8028f96888a338f743f85a7b889cb61"},{"practice_08","523ae8db2721179e33aef21cc8391a50"},{"practice_10","6cdc4c5052bb011b36a2dc542e3d43fc"},{"say_template_1","45c7fcc914bc25fafc3f0d4649f49d06"},{"say_template_2","5a03f972aa580c1f02337a46c4d8cfae"},{"say_template_3","5e9072bb563d5b4df0c5aa60523c5dc7"},{"shizi_book","717348862d528b7bad31214d3858d931"},{"shizi_radical","37d795f079ea7ba7582000d058445fcc"},{"shizi_words","774fdae5e6973ebdfb739fa572e14b37"},{"song_PY001","efbcfd2192d0dccfb02d33626ec8d0db"},{"song_PY013","810a1327e506b1333b9b0aaf7fb848e5"},{"song_PY025","2d6423db4d176813a03f20eb006252be"},{"song_PY038","00fd27cc0f4e9adf127bff81e73630d3"},{"song_PY050","6c3906dbdc0bbefa35beaf2659b5110e"},{"song_PY063","4ffd53a8e1d285e2ecb42ff6546a4e6c"},{"spell_template_1","78a8ae84db84e20d82aa94dd863162b8"},{"spell_template_2","7499a9467a76196ea281449b6f02a642"},{"spell_template_3","0b1ed906d0f36ace280ac722d58cf235"},{"template1","2493b0c6f01e56add2d8526f18ca2606"},{"template2","1c716582a60fde601490e2532b6d1140"},{"tone_roller_coaster_1","fc18bee171f2e037bc8f2a5e09ace47c"},{"tone_roller_coaster_2","5cab24a6f8ff2bf652fdccbc74ef8ab7"},{"ui_o_explain","7e279b835a0c99e360c64f632047af21"},{"ui_v_ve_explain","c7e25890808adf45b13f208736409e39"},{"ui_video","9607519d152ff3e82624479a8651cd98"},{"ui_vn_van_explain","fbbd47e0c8fae65299e9ed0ca28dbbc5"},{"write_templet_02","9864117e3f0a09e3f5f7f77dfa9188a7"},{"write_templet_03","bcacf1669a1f85577e53057b070964cc"},{"write_templet_04","bb64b86f717ab8156420bbbfb6f7956f"}}',
+  'local AM = g.AssetMgr',
+  'local okloop, errloop = pcall(function()',
+  'if type(AM) == "table" then',
+  '  for _,pair in ipairs(ids) do',
+  '    local id, md5 = pair[1], pair[2]',
+  '    local ok, a = pcall(function() return AM:getAsset(id) end)',
+  '    if ok and type(a) == "table" then',
+  '      local ok3, st = pcall(function() return a:getState() end)',
+  '      if ok3 and st == 3 then',
+  '        P("SKIP."..id..".installed")',
+  '      else',
+  '        local ok2, r2 = pcall(function() return a:download() end)',
+  '        P("TRIG."..id.."="..tostring(ok2)..":"..type(r2))',
+  '      end',
+  '    else',
+  '      P("TRIG."..id.."=GETFAIL:"..tostring(a))',
+  '    end',
+  '  end',
+  'end',
+  'end)',
+  'if not okloop then P("LOOPERR:"..tostring(errloop)) end',
   'return table.concat(out, string.char(10))'
 ].join('\n');
 
@@ -413,7 +435,7 @@ function luaRunInject() {
 
 var harvestScheduled = false;
 function luaRunInject2() {
-  if (luaInj >= 2 || !luaStatePtr) return;
+  if (true) return; // disabled: JS-thread injection races (SIGILL)
   luaInj = 2;
   try {
     var codeStr = Memory.allocUtf8String(LUA_CODE2);
@@ -449,7 +471,7 @@ function luaRunInject2() {
 
 var harvest2Scheduled = false;
 function luaRunInject3() {
-  if (luaInj >= 3 || !luaStatePtr) return;
+  if (true) return; // disabled: JS-thread injection races (SIGILL)
   luaInj = 3;
   try {
     var codeStr = Memory.allocUtf8String(LUA_CODE3);
