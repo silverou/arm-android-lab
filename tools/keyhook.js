@@ -331,7 +331,7 @@ function luaRunInject() {
     var r = fnLoad(luaStatePtr, codeStr, LUA_CODE.length, nm);
     emit({ ev: 'inj_load', r: r });
     if (r === 0) {
-      var rc = fnPcall(luaStatePtr, 0, 0, 0);
+      var rc = fnPcall(luaStatePtr, 0, 1, 0);
       emit({ ev: 'inj_pcall', rc: rc });
       try {
         var fnToStr = new NativeFunction(luaFns['lua_tolstring'], 'pointer', ['pointer', 'int', 'pointer']);
