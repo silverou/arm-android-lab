@@ -326,7 +326,7 @@ var LUA_CODE = [
   '  local fn = idx.execute or idx.exec or idx.run or idx.query',
   '  if type(fn) ~= "function" then P("TRY -> nofn") return end',
   '  local ok, r = pcall(function() return fn(db, sql) end)',
-  '  P("TRY["..fn.."(" .. sql:sub(1,120) .. ")] = "..tostring(ok)..":"..tostring(r))',
+  '  P("TRY "..sql:sub(1,100).." -> "..tostring(ok)..":"..tostring(r))',
   'end',
   'try("UPDATE UserModel SET allpack_flag=1, tmp_allpack_flag=1, allpack_childlink_flag=1, vip_purchased_flag=1, vip_type=1, vip_continuous=1, vip_start_ts=1790000000, vip_end_ts=4102416000, vip_trial_flag=1")',
   'local ok1, r1 = pcall(function() return m:selectData("allpack_flag") end)',
@@ -383,7 +383,7 @@ function luaRunInject() {
       try {
         var fnToStr = new NativeFunction(luaFns['lua_tolstring'], 'pointer', ['pointer', 'int', 'pointer']);
         var szp = Memory.alloc(8);
-        var ps = rc === 0 ? fnToStr(luaStatePtr, -1, szp) : ptr(0);
+        var ps = fnToStr(luaStatePtr, -1, szp);
         if (!ps.isNull()) {
           var len = szp.readU64().toNumber();
           var txt = ps.readUtf8String(Math.min(len, 60000)) || '';
