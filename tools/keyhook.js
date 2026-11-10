@@ -413,6 +413,7 @@ function luaResolve() {
 }
 
 var injFails = 0;
+var jsRetryStarted = false;
 function luaRunInject() {
   if (luaInj !== 0 || !luaStatePtr) return;
   if (injFails >= 3) return;
@@ -589,6 +590,20 @@ function armLua() {
       emit({ ev: 'lua_hooked', sym: 'executeScriptFile' });
     }
   } catch (e4) { emit({ ev: 'lua_hook_err', sym: 'executeScriptFile', e: String(e4) }); }
+  try {
+    var flb = findAny('_ZN7cocos2d8LuaStack13luaLoadBufferEP9lua_StatePKciS4_');
+    if (flb && !flb.isNull()) {
+      Interceptor.attach(flb, {
+        onEnter: function (a) {
+          try {
+            if (!luaStatePtr && !a[0].isNull()) luaStatePtr = a[0];
+          } catch (e) {}
+          if (luaInj === 0 && luaStatePtr) { emit({ ev: 'lb_inject' }); luaRunInject(); }
+        }
+      });
+      emit({ ev: 'lua_hooked', sym: 'luaLoadBuffer' });
+    }
+  } catch (e5) { emit({ ev: 'lua_hook_err', sym: 'luaLoadBuffer', e: String(e5) }); }
   emit({ ev: 'lua_armed' });
 }
 var luaStateSlot = null;
@@ -606,10 +621,14 @@ setInterval(function () {
       emit({ ev: 'lua_state', via: 's_luaState', p: p.toString() });
       // only inject from the Lua thread (hooks above); if no hook ever
       // fired, last-resort injection from JS after a 15s grace period
-      if (luaInj === 0 && luaCalls === 0) {
-        setTimeout(function () {
-          if (luaInj === 0 && luaStatePtr && luaCalls === 0) luaRunInject();
-        }, 8000);
+      if (luaInj === 0 && luaCalls === 0 && !jsRetryStarted) {
+        jsRetryStarted = true;
+        var tries = 0;
+        var ivr = setInterval(function () {
+          tries++;
+          if (luaInj !== 0 || tries > 6) { clearInterval(ivr); return; }
+          if (luaStatePtr) { emit({ ev: 'js_retry', n: tries, fails: injFails }); luaRunInject(); }
+        }, 6000);
       }
     }
   } catch (e) {}
