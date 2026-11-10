@@ -542,7 +542,7 @@ function armLua() {
             luaStatePtr = a[0];
             emit({ ev: 'lua_state', via: n, p: luaStatePtr.toString() });
           }
-          if (luaInj === 0 && luaCalls > 3) luaRunInject();
+          if (luaInj === 0 && luaCalls >= 1) luaRunInject();
         }
       });
       emit({ ev: 'lua_hooked', sym: n });
@@ -570,7 +570,7 @@ function armLua() {
                 luaStatePtr = a[0];
                 emit({ ev: 'lua_state', via: 'callJavaStaticMethod', p: luaStatePtr.toString() });
               }
-              if (luaInj === 0 && luaCalls > 3) luaRunInject();
+              if (luaInj === 0 && luaCalls >= 1) luaRunInject();
             }
           });
           emit({ ev: 'lua_hooked', sym: 'callJavaStaticMethod' });
@@ -621,7 +621,7 @@ setInterval(function () {
       emit({ ev: 'lua_state', via: 's_luaState', p: p.toString() });
       // only inject from the Lua thread (hooks above); if no hook ever
       // fired, last-resort injection from JS after a 15s grace period
-      if (luaInj === 0 && luaCalls === 0 && !jsRetryStarted) {
+      if (luaInj === 0 && !jsRetryStarted) {
         jsRetryStarted = true;
         var tries = 0;
         var ivr = setInterval(function () {
