@@ -1,7 +1,10 @@
-"""SMS login flow driver: send code, relay OTP via repo file, login, sample auth.
+"""SMS login flow driver v4 (daemon-based).
 
-Env: FRIDA_DEVICE, LOGIN_PHONE, OTP_URL (raw file URL to poll), BUNDLE_SCRIPTS.
-Writes phase results to stdout (no tokens/secrets printed).
+All frida scripts are loaded BEFORE resume (app suspended). A persistent
+Lua daemon then serves host-written command files, so phases never depend
+on post-resume script creation (which times out under app load).
+
+Env: FRIDA_DEVICE, LOGIN_PHONE, LOGIN_NONCE, OTP_URL.
 """
 import json
 import os
@@ -13,9 +16,8 @@ import urllib.request
 
 import frida
 
-
-def sh(args, **kw):
-    return subprocess.run(args, **kw)
+OUT_PATH = "/data/user/0/com.ihuman.pinyin/files/frida_out.txt"
+CMD_PATH = "/data/local/tmp/lua_cmd.lua"
 
 
 def guest_write(path, data, mode="644"):
@@ -26,6 +28,36 @@ def guest_write(path, data, mode="644"):
     subprocess.run(["sudo", "docker", "exec", "redroid", "/system/bin/sh", "-c",
                     "chmod %s %s" % (mode, path)], check=False)
     os.unlink(tmp.name)
+
+
+def guest_cat(path):
+    try:
+        r = subprocess.run(["sudo", "docker", "exec", "redroid", "/system/bin/cat", path],
+                           capture_output=True, timeout=30)
+        return r.stdout.decode("utf-8", "replace")
+    except Exception:
+        return ""
+
+
+def guest_rm(path):
+    subprocess.run(["sudo", "docker", "exec", "redroid", "/system/bin/sh", "-c",
+                    "rm -f %s" % path], check=False,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def tap(x, y):
+    subprocess.run(["sudo", "docker", "exec", "redroid", "/system/bin/input", "tap", str(x), str(y)],
+                   check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def tapper():
+    for _ in range(5):
+        tap(1108, 402)
+        time.sleep(1)
+        tap(592, 576)
+        time.sleep(1)
+        tap(1188, 76)
+        time.sleep(2)
 
 
 def connect(addr, tries=30):
@@ -65,75 +97,36 @@ def spawn_app(dev):
     raise RuntimeError("spawn failed")
 
 
-def _guest_cat(path):
-    try:
-        r = subprocess.run(["sudo", "docker", "exec", "redroid", "/system/bin/cat", path],
-                           capture_output=True, timeout=30)
-        return r.stdout.decode("utf-8", "replace")
-    except Exception:
-        return ""
+_phase_n = [0]
 
 
-def _guest_rm(path):
-    subprocess.run(["sudo", "docker", "exec", "redroid", "/system/bin/sh", "-c",
-                    "rm -f %s" % path], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-
-OUT_PATH = "/data/user/0/com.ihuman.pinyin/files/frida_out.txt"
-
-
-def run_phase(sess, chunk, tag, timeout=120, quiet=False):
-    """Write chunk to guest, load luacall, read result from guest file."""
-    print("PHASE", tag, "start", flush=True)
-    guest_write("/data/local/tmp/lua_cmd.lua", chunk)
-    _guest_rm(OUT_PATH)
-    src = open("tools/luacall.js", encoding="utf-8").read()
-    s = None
-    try:
-        s = sess.create_script(src)
-        s.on("message", lambda m, d: None)
-        try:
-            s.load()
-        except Exception as e:
-            # frida's load ack can time out while the script is actually live;
-            # the file channel tells the truth, so keep waiting.
-            print("LOAD_ACK_WARN", tag, str(e)[:120], flush=True)
-    except Exception as e:
-        print("SCRIPT_FAIL", tag, str(e)[:200], flush=True)
-        return None
+def run_phase(chunk, tag, timeout=150, quiet=False):
+    _phase_n[0] += 1
+    uniq = "%s.%d" % (tag, _phase_n[0])
+    print("PHASE", uniq, "start", flush=True)
+    guest_rm(OUT_PATH)
+    guest_write(CMD_PATH, "TAG:%s\n%s" % (uniq, chunk))
     t0 = time.time()
     result = None
     while time.time() - t0 < timeout:
         time.sleep(2)
-        raw = _guest_cat(OUT_PATH)
+        raw = guest_cat(OUT_PATH)
         if not raw:
             continue
         if raw.startswith("OK:"):
+            parts = raw.split(":", 3)
+            if len(parts) >= 3 and parts[2] == uniq:
+                result = parts[3] if len(parts) > 3 else ""
+                break
+        elif raw.startswith("ERR:"):
             parts = raw.split(":", 2)
-            result = parts[2] if len(parts) > 2 else ""
-            break
-        if raw.startswith("ERR:"):
-            print("PHASE", tag, "err:", raw[:200], flush=True)
-            break
-        # partial write, wait a tick
-        time.sleep(2)
-        raw2 = _guest_cat(OUT_PATH)
-        if raw2.startswith("OK:"):
-            parts = raw2.split(":", 2)
-            result = parts[2] if len(parts) > 2 else ""
-            break
-        if raw2.startswith("ERR:"):
-            print("PHASE", tag, "err:", raw2[:200], flush=True)
-            break
-    try:
-        if s:
-            s.unload()
-    except Exception:
-        pass
+            if len(parts) >= 2 and parts[1] == uniq:
+                print("PHASE", uniq, "err:", raw[:200], flush=True)
+                break
     if not quiet:
-        print("PHASE", tag, "result:", (result or "<none>")[:800], flush=True)
+        print("PHASE", uniq, "result:", (result or "<none>")[:800], flush=True)
     else:
-        print("PHASE", tag, "done quiet" if result is not None else "empty", flush=True)
+        print("PHASE", uniq, "done quiet" if result is not None else "empty", flush=True)
     return result
 
 
@@ -158,7 +151,6 @@ if type(f) ~= "function" then P("SEND:NOFN") return table.concat(out, "|") end
 local phone = "%s"
 local ok, r = pcall(function() return f(IHM, phone) end)
 if not ok then ok, r = pcall(function() return f(phone) end) end
-if not ok then ok, r = pcall(function() return f(IHM, phone, "login") end) end
 P("SEND:"..tostring(ok)..":"..tostring(r))
 return table.concat(out, "|")
 """ % phone
@@ -200,13 +192,13 @@ local function calln(t, n)
   if f == nil and type(t.class) == "table" and type(t.class.__index) == "table" then f = t.class.__index[n] end
   if type(f) ~= "function" then return "NOFN" end
   local ok, r = pcall(function() return f(t) end)
-  return tostring(ok)..":"..type(r)
+  return tostring(ok)..":"..type(r)..":"..tostring(r)
 end
+P("LM.type="..type(LM))
 P("STATE.islogin="..calln(LM, "islogin"))
-P("STATE.userId="..calln(LM, "getCurrentUserId"))
-P("STATE.getCurrentSimMobile="..calln(IHM, "getCurrentSimMobile"))
-local UD = package.loaded and package.loaded["app.data.UserData"]
-P("STATE.userdata="..type(UD))
+P("STATE.accountId="..calln(LM, "getAccountID"))
+P("AM.type="..type(g.AssetMgr))
+P("FLAG="..tostring(_G.FRIDA_LOGIN_RESULT))
 return table.concat(out, "|")
 """
 
@@ -254,17 +246,16 @@ return table.concat(out, string.char(10))
 
 
 def encrypt_secret(text):
-    import subprocess as sp
     d = tempfile.mkdtemp()
     tf = os.path.join(d, "sess.txt")
     with open(tf, "w", encoding="utf-8") as f:
         f.write(text)
     kf = os.path.join(d, "k.bin")
-    sp.run(["openssl", "rand", "-out", kf, "32"], check=True)
-    sp.run(["openssl", "enc", "-aes-256-cbc", "-pbkdf2", "-pass", "file:" + kf,
-            "-in", tf, "-out", "sess.enc"], check=True)
-    sp.run(["openssl", "pkeyutl", "-encrypt", "-pubin", "-inkey", "tools/login_pub.pem",
-            "-in", kf, "-out", "k.rsa"], check=True)
+    subprocess.run(["openssl", "rand", "-out", kf, "32"], check=True)
+    subprocess.run(["openssl", "enc", "-aes-256-cbc", "-pbkdf2", "-pass", "file:" + kf,
+                    "-in", tf, "-out", "sess.enc"], check=True)
+    subprocess.run(["openssl", "pkeyutl", "-encrypt", "-pubin", "-inkey", "tools/login_pub.pem",
+                    "-in", kf, "-out", "k.rsa"], check=True)
     for n in ("sess.enc", "k.rsa"):
         p = os.path.join(d, n)
         if os.path.exists(p):
@@ -277,11 +268,11 @@ def chunk_sample():
 local g = {}
 for k, v in pairs(_G) do g[k] = v end
 local AM = g.AssetMgr
+if type(AM) ~= "table" then P("SAMPLE:NOAM") return table.concat(out, "|") end
 if type(AM.refreshAssetSummary) == "function" then
   pcall(function() return AM:refreshAssetSummary() end)
 end
-local ids = {"PY006", "PY010", "PY030", "practice_01", "book_S1E06"}
-if type(AM) ~= "table" then P("SAMPLE:NOAM") return table.concat(out, "|") end
+local ids = {"PY002", "PY006", "PY010", "PY030", "practice_01"}
 local okloop, errloop = pcall(function()
   for _, id in ipairs(ids) do
     local ok, a = pcall(function() return AM:getAsset(id) end)
@@ -303,22 +294,8 @@ return table.concat(out, "|")
 """
 
 
-def tap(x, y):
-    subprocess.run(["sudo", "docker", "exec", "redroid", "/system/bin/input", "tap", str(x), str(y)],
-                   check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-
-def tapper():
-    for _ in range(5):
-        tap(1108, 402)
-        time.sleep(1)
-        tap(592, 576)
-        time.sleep(1)
-        tap(1188, 76)
-        time.sleep(2)
-
-
 def fetch_otp(url, deadline_s):
+    want = os.environ.get("LOGIN_NONCE", "").strip()
     t0 = time.time()
     while time.time() - t0 < deadline_s:
         try:
@@ -329,14 +306,13 @@ def fetch_otp(url, deadline_s):
                 d = json.loads(r.read().decode("utf-8", "replace"))
             otp = str(d.get("otp") or "").strip()
             nonce = str(d.get("nonce") or "").strip()
-            want = os.environ.get("LOGIN_NONCE", "").strip()
             if want and nonce != want:
                 time.sleep(5)
                 continue
             if otp and otp.isdigit() and 4 <= len(otp) <= 8:
                 print("OTP_GOT len=%d" % len(otp), flush=True)
                 return otp
-        except Exception as e:
+        except Exception:
             pass
         time.sleep(5)
     print("OTP_TIMEOUT", flush=True)
@@ -358,35 +334,31 @@ def main():
         print("DETACHED", reason, flush=True)
     sess.on("detached", on_detached)
 
-    # full gate-passing bundle set (hide + bridge v66 via guest-file loader),
-    # otherwise the packer's anti-emulator gate kills the app within seconds.
-    loaded = []
-    try:
-        hide = open("tools/hide.js", encoding="utf-8").read()
-        hs = sess.create_script(hide)
-        hs.load()
-        loaded.append(hs)
-        print("HIDE_OK", flush=True)
-    except Exception as e:
-        print("HIDE_FAIL", str(e)[:150], flush=True)
-    try:
-        loader = open("tools/loadfile.js", encoding="utf-8").read()
-        bridge_src = loader.replace("__PATH__", "/data/local/tmp/v66.js")
-        bs = sess.create_script(bridge_src)
-        bs.load()
-        loaded.append(bs)
-        print("BRIDGE_OK", flush=True)
-    except Exception as e:
-        print("BRIDGE_FAIL", str(e)[:200], flush=True)
+    # clear stale command file so the daemon cannot execute an old chunk on boot
+    guest_rm(CMD_PATH)
+
+    # load everything while the app is still suspended
+    for name, path in (("HIDE", "tools/hide.js"),
+                       ("BRIDGE", "tools/loadfile.js"),
+                       ("DAEMON", "tools/luadaemon.js")):
+        try:
+            src = open(path, encoding="utf-8").read()
+            if name == "BRIDGE":
+                src = src.replace("__PATH__", "/data/local/tmp/v66.js")
+            sc = sess.create_script(src)
+            sc.load()
+            print(name + "_OK", flush=True)
+        except Exception as e:
+            print(name + "_FAIL", str(e)[:200], flush=True)
+
     dev.resume(pid)
-    time.sleep(35)  # let the app boot to UI
+    time.sleep(40)
     tapper()
     time.sleep(10)
 
-    # send SMS with retries (engine/IHumanManager may not be loaded yet)
     sent = False
     for attempt in range(4):
-        res = run_phase(sess, chunk_send(phone), "send%d" % attempt, timeout=90) or ""
+        res = run_phase(chunk_send(phone), "send%d" % attempt, timeout=120) or ""
         if "SEND:true" in res:
             sent = True
             break
@@ -394,7 +366,6 @@ def main():
             print("IHM not ready, retry in 20s", flush=True)
             time.sleep(20)
             continue
-        # error result (e.g. rate limited / wrong args) - do not resend blindly
         print("SEND_ERR_RESULT", res[:200], flush=True)
         break
     if not sent:
@@ -405,19 +376,19 @@ def main():
     if not otp:
         print("FLOW_ABORT no otp", flush=True)
         return 2
-    res = run_phase(sess, chunk_login(phone, otp), "login", timeout=90) or ""
+    res = run_phase(chunk_login(phone, otp), "login", timeout=120) or ""
     print("LOGIN_DISPATCHED", flush=True)
     time.sleep(25)
     tapper()
     time.sleep(6)
-    run_phase(sess, chunk_state(), "state", timeout=60)
-    sec = run_phase(sess, chunk_secret(), "secret", timeout=90, quiet=True)
+    run_phase(chunk_state(), "state", timeout=90)
+    sec = run_phase(chunk_secret(), "secret", timeout=90, quiet=True)
     if sec:
         encrypt_secret(sec)
     else:
         print("SECRET_EMPTY", flush=True)
     for attempt in range(3):
-        res = run_phase(sess, chunk_sample(), "sample%d" % attempt, timeout=120) or ""
+        res = run_phase(chunk_sample(), "sample%d" % attempt, timeout=150) or ""
         if "GETFAIL" not in res and "NOAM" not in res:
             break
         print("SAMPLE_RETRY in 25s", flush=True)
