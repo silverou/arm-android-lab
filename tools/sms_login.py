@@ -65,54 +65,76 @@ def spawn_app(dev):
     raise RuntimeError("spawn failed")
 
 
-def run_phase(sess, chunk, tag, timeout=75, quiet=False):
-    """Write chunk to guest, load luacall, wait for result."""
+def _guest_cat(path):
+    try:
+        r = subprocess.run(["sudo", "docker", "exec", "redroid", "/system/bin/cat", path],
+                           capture_output=True, timeout=30)
+        return r.stdout.decode("utf-8", "replace")
+    except Exception:
+        return ""
+
+
+def _guest_rm(path):
+    subprocess.run(["sudo", "docker", "exec", "redroid", "/system/bin/sh", "-c",
+                    "rm -f %s" % path], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+OUT_PATH = "/data/user/0/com.ihuman.pinyin/files/frida_out.txt"
+
+
+def run_phase(sess, chunk, tag, timeout=120, quiet=False):
+    """Write chunk to guest, load luacall, read result from guest file."""
     print("PHASE", tag, "start", flush=True)
     guest_write("/data/local/tmp/lua_cmd.lua", chunk)
+    _guest_rm(OUT_PATH)
     src = open("tools/luacall.js", encoding="utf-8").read()
-    box = {"result": None, "done": False}
-
-    def on_msg(m, data):
-        if m.get("type") != "send":
-            return
-        p = m.get("payload") or {}
-        ev = p.get("ev")
-        if ev == "result":
-            box["result"] = p.get("txt")
-            box["done"] = True
-        elif ev in ("giveup",):
-            box["done"] = True
-        elif not quiet:
-            print("LC", json.dumps(p, ensure_ascii=False)[:300], flush=True)
-
     s = None
-    last = None
-    for attempt in range(3):
+    try:
+        s = sess.create_script(src)
+        s.on("message", lambda m, d: None)
         try:
-            s = sess.create_script(src)
-            s.on("message", on_msg)
             s.load()
-            break
         except Exception as e:
-            last = e
-            s = None
-            print("SCRIPT_RETRY", tag, attempt, str(e)[:120], flush=True)
-            time.sleep(6)
-    if s is None:
-        print("SCRIPT_FAIL", tag, str(last)[:200], flush=True)
+            # frida's load ack can time out while the script is actually live;
+            # the file channel tells the truth, so keep waiting.
+            print("LOAD_ACK_WARN", tag, str(e)[:120], flush=True)
+    except Exception as e:
+        print("SCRIPT_FAIL", tag, str(e)[:200], flush=True)
         return None
     t0 = time.time()
-    while time.time() - t0 < timeout and not box["done"]:
-        time.sleep(1)
+    result = None
+    while time.time() - t0 < timeout:
+        time.sleep(2)
+        raw = _guest_cat(OUT_PATH)
+        if not raw:
+            continue
+        if raw.startswith("OK:"):
+            parts = raw.split(":", 2)
+            result = parts[2] if len(parts) > 2 else ""
+            break
+        if raw.startswith("ERR:"):
+            print("PHASE", tag, "err:", raw[:200], flush=True)
+            break
+        # partial write, wait a tick
+        time.sleep(2)
+        raw2 = _guest_cat(OUT_PATH)
+        if raw2.startswith("OK:"):
+            parts = raw2.split(":", 2)
+            result = parts[2] if len(parts) > 2 else ""
+            break
+        if raw2.startswith("ERR:"):
+            print("PHASE", tag, "err:", raw2[:200], flush=True)
+            break
     try:
-        s.unload()
+        if s:
+            s.unload()
     except Exception:
         pass
     if not quiet:
-        print("PHASE", tag, "result:", (box["result"] or "<none>")[:800], flush=True)
+        print("PHASE", tag, "result:", (result or "<none>")[:800], flush=True)
     else:
-        print("PHASE", tag, "done quiet", flush=True)
-    return box["result"]
+        print("PHASE", tag, "done quiet" if result is not None else "empty", flush=True)
+    return result
 
 
 CHUNK_HEAD = r"""
