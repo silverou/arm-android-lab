@@ -2,6 +2,10 @@ name: capture
 
 on:
   workflow_dispatch:
+    inputs:
+      nonce:
+        required: false
+        default: ""
 
 jobs:
   capture:
@@ -299,7 +303,7 @@ jobs:
           tools/gx.sh "wm dismiss-keyguard" || true
           tools/gx.sh "svc power stayon true" || true
           tools/gx.sh "am force-stop com.ihuman.pinyin" || true
-          LOGIN_PHONE="$PHONE" OTP_URL="https://raw.githubusercontent.com/silverou/arm-android-lab/main/login_tmp.json" python3 -u tools/sms_login.py > login_out.txt 2>&1 || true
+          LOGIN_PHONE="$PHONE" LOGIN_NONCE="${{ inputs.nonce }}" OTP_URL="https://raw.githubusercontent.com/silverou/arm-android-lab/main/login_tmp.json" python3 -u tools/sms_login.py > login_out.txt 2>&1 || true
           tail -60 login_out.txt || true
           echo "--- final mitm dump ---"
           cp flows.txt flows1.txt 2>/dev/null || true
