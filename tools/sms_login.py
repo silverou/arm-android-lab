@@ -65,7 +65,7 @@ def spawn_app(dev):
     raise RuntimeError("spawn failed")
 
 
-def run_phase(sess, chunk, tag, timeout=75):
+def run_phase(sess, chunk, tag, timeout=75, quiet=False):
     """Write chunk to guest, load luacall, wait for result."""
     print("PHASE", tag, "start", flush=True)
     guest_write("/data/local/tmp/lua_cmd.lua", chunk)
@@ -82,7 +82,7 @@ def run_phase(sess, chunk, tag, timeout=75):
             box["done"] = True
         elif ev in ("giveup",):
             box["done"] = True
-        else:
+        elif not quiet:
             print("LC", json.dumps(p, ensure_ascii=False)[:300], flush=True)
 
     try:
@@ -99,7 +99,10 @@ def run_phase(sess, chunk, tag, timeout=75):
         s.unload()
     except Exception:
         pass
-    print("PHASE", tag, "result:", (box["result"] or "<none>")[:800], flush=True)
+    if not quiet:
+        print("PHASE", tag, "result:", (box["result"] or "<none>")[:800], flush=True)
+    else:
+        print("PHASE", tag, "done quiet", flush=True)
     return box["result"]
 
 
@@ -155,7 +158,9 @@ return table.concat(out, "|")
 
 def chunk_state():
     return CHUNK_HEAD + r"""
-local LM = package.loaded and package.loaded["app.common.ihumansdk.LoginManager"]
+local g = {}
+for k, v in pairs(_G) do g[k] = v end
+local LM = g.LoginManager
 local function calln(t, n)
   if type(t) ~= "table" then return "NOTABLE" end
   local f = t[n]
@@ -174,11 +179,75 @@ return table.concat(out, "|")
 """
 
 
+def chunk_secret():
+    return CHUNK_HEAD + r"""
+local out = {}
+local function add(k, v) out[#out+1] = tostring(k).."="..tostring(v) end
+local g = {}
+for k, v in pairs(_G) do g[k] = v end
+local LM = g.LoginManager
+if type(LM) == "table" then
+  for k, v in pairs(LM) do
+    if type(k) == "string" and type(v) == "string" and (k:lower():find("token") or k:lower():find("session") or k:lower():find("uid") or k:lower():find("userid") or k:lower():find("account")) then
+      add(k, v)
+    end
+  end
+  local function pickL(n)
+    local f = LM[n]
+    if f == nil and type(LM.class) == "table" then f = LM.class[n] end
+    if f == nil and type(LM.class) == "table" and type(LM.class.__index) == "table" then f = LM.class.__index[n] end
+    return f
+  end
+  for _, n in ipairs({"getUToken", "getSession", "getAccountID", "getCurrentUserId", "getUserId"}) do
+    local f = pickL(n)
+    if type(f) == "function" then
+      local ok, r = pcall(function() return f(LM) end)
+      if ok and r ~= nil and type(r) ~= "table" then add("fn."..n, r) end
+    end
+  end
+end
+local IHM = package.loaded and package.loaded["app.common.ihumansdk.IHumanManager"]
+if type(IHM) == "table" then
+  for k, v in pairs(IHM) do
+    if type(k) == "string" and type(v) == "string" and (k:lower():find("utoken") or k:lower():find("session")) then add("ihm."..k, v) end
+  end
+end
+local UD = g.UserDefaultMgr
+if type(UD) == "table" then
+  if UD.userId then add("ud.userId", UD.userId) end
+  if UD.accountId then add("ud.accountId", UD.accountId) end
+end
+return table.concat(out, string.char(10))
+"""
+
+
+def encrypt_secret(text):
+    import subprocess as sp
+    d = tempfile.mkdtemp()
+    tf = os.path.join(d, "sess.txt")
+    with open(tf, "w", encoding="utf-8") as f:
+        f.write(text)
+    kf = os.path.join(d, "k.bin")
+    sp.run(["openssl", "rand", "-out", kf, "32"], check=True)
+    sp.run(["openssl", "enc", "-aes-256-cbc", "-pbkdf2", "-pass", "file:" + kf,
+            "-in", tf, "-out", "sess.enc"], check=True)
+    sp.run(["openssl", "pkeyutl", "-encrypt", "-pubin", "-inkey", "tools/login_pub.pem",
+            "-in", kf, "-out", "k.rsa"], check=True)
+    for n in ("sess.enc", "k.rsa"):
+        p = os.path.join(d, n)
+        if os.path.exists(p):
+            os.replace(p, n)
+    print("SECRET_ENC_OK", flush=True)
+
+
 def chunk_sample():
     return CHUNK_HEAD + r"""
 local g = {}
 for k, v in pairs(_G) do g[k] = v end
 local AM = g.AssetMgr
+if type(AM.refreshAssetSummary) == "function" then
+  pcall(function() return AM:refreshAssetSummary() end)
+end
 local ids = {"PY006", "PY010", "PY030", "practice_01", "book_S1E06"}
 if type(AM) ~= "table" then P("SAMPLE:NOAM") return table.concat(out, "|") end
 local okloop, errloop = pcall(function()
@@ -283,9 +352,20 @@ def main():
         print("FLOW_ABORT no otp", flush=True)
         return 2
     res = run_phase(sess, chunk_login(phone, otp), "login", timeout=90) or ""
+    print("LOGIN_DISPATCHED", flush=True)
+    time.sleep(30)
     run_phase(sess, chunk_state(), "state", timeout=60)
-    # mark otp used by overwriting locally is done by caller; here just log
-    run_phase(sess, chunk_sample(), "sample", timeout=120)
+    sec = run_phase(sess, chunk_secret(), "secret", timeout=90, quiet=True)
+    if sec:
+        encrypt_secret(sec)
+    else:
+        print("SECRET_EMPTY", flush=True)
+    for attempt in range(3):
+        res = run_phase(sess, chunk_sample(), "sample%d" % attempt, timeout=120) or ""
+        if "GETFAIL" not in res and "NOAM" not in res:
+            break
+        print("SAMPLE_RETRY in 25s", flush=True)
+        time.sleep(25)
     print("SAMPLE_TRIGGERED; waiting 90s for auth+downloads", flush=True)
     time.sleep(90)
     try:
