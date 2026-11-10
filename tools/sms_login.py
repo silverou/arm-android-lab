@@ -85,12 +85,21 @@ def run_phase(sess, chunk, tag, timeout=75, quiet=False):
         elif not quiet:
             print("LC", json.dumps(p, ensure_ascii=False)[:300], flush=True)
 
-    try:
-        s = sess.create_script(src)
-        s.on("message", on_msg)
-        s.load()
-    except Exception as e:
-        print("SCRIPT_FAIL", tag, str(e)[:200], flush=True)
+    s = None
+    last = None
+    for attempt in range(3):
+        try:
+            s = sess.create_script(src)
+            s.on("message", on_msg)
+            s.load()
+            break
+        except Exception as e:
+            last = e
+            s = None
+            print("SCRIPT_RETRY", tag, attempt, str(e)[:120], flush=True)
+            time.sleep(6)
+    if s is None:
+        print("SCRIPT_FAIL", tag, str(last)[:200], flush=True)
         return None
     t0 = time.time()
     while time.time() - t0 < timeout and not box["done"]:
@@ -348,9 +357,9 @@ def main():
     except Exception as e:
         print("BRIDGE_FAIL", str(e)[:200], flush=True)
     dev.resume(pid)
-    time.sleep(20)  # let the app boot to UI
+    time.sleep(35)  # let the app boot to UI
     tapper()
-    time.sleep(8)
+    time.sleep(10)
 
     # send SMS with retries (engine/IHumanManager may not be loaded yet)
     sent = False
