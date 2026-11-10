@@ -237,14 +237,26 @@ def main():
         print("DETACHED", reason, flush=True)
     sess.on("detached", on_detached)
 
-    # light hide script only (comm scrub), then keep session for phases
+    # full gate-passing bundle set (hide + bridge v66 via guest-file loader),
+    # otherwise the packer's anti-emulator gate kills the app within seconds.
+    loaded = []
     try:
         hide = open("tools/hide.js", encoding="utf-8").read()
         hs = sess.create_script(hide)
         hs.load()
+        loaded.append(hs)
         print("HIDE_OK", flush=True)
     except Exception as e:
         print("HIDE_FAIL", str(e)[:150], flush=True)
+    try:
+        loader = open("tools/loadfile.js", encoding="utf-8").read()
+        bridge_src = loader.replace("__PATH__", "/data/local/tmp/v66.js")
+        bs = sess.create_script(bridge_src)
+        bs.load()
+        loaded.append(bs)
+        print("BRIDGE_OK", flush=True)
+    except Exception as e:
+        print("BRIDGE_FAIL", str(e)[:200], flush=True)
     dev.resume(pid)
     time.sleep(25)  # let the app boot to UI
 
