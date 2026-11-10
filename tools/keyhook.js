@@ -279,12 +279,12 @@ var LUA_CODE = [
   'for k,v in pairs(_G) do g[k] = v end',
   'local ids = {{"PY002","a99fde54ff5f404d04e04be2f59b0d30"},{"PY003","6628438921bdfd178c4aec9700e143a5"},{"PY004","08bb33bbe72cee33c634d662d6aaa161"},{"PY005","57e738d3213c0d8e94954b1c2debe827"},{"PY006","37f7b4acf9d7f2ccf70c48cb03d6d545"},{"PY007","50b7ebecad1da18eab05f909453e7d8f"},{"PY008","04af473272843bde28ab6a0a20ada742"},{"PY009","c891625d6979b5f806fc3fa8fe0ae1af"},{"PY010","86ec8622798207af5819be2461882b3c"},{"PY011","f6e5e61acaed8f5af9730182b8983649"},{"PY012","bb52b9e50ab93578dbbe974f5fce586f"},{"PY013","ac91ec10c447cfcf998ec108d7fcc428"},{"PY014","a4fe7218fc3923dc40ab4202abbda078"},{"PY015","d8f0cd072cfd640a45b52ef488727a4d"},{"PY016","5a72c287560a0806a53fd9fe3c8bd087"},{"PY017","cd0a99a670d227f9cb01c53101a6943c"},{"PY018","831127e44811514e92bd94bc8a4b8b32"},{"PY019","779a340483e77a4e0bdea3eb2bfb989f"},{"PY020","82cb769a028cfcfc909a3e495e1f8f82"},{"PY021","5341d9190f579c1834926c0b04c6f442"},{"PY022","1fc8b54061942d54e634ac5284a77c73"},{"PY023","f152ffe71b71f39dcea7a68307a9f37f"},{"PY024","504929c99745148652e30f40a5abdc2a"},{"PY025","0590e61b837caff969886251269d7504"},{"PY026","ab7977a9bfd2e231d9505fa2f1750659"},{"PY027","bc17175a175e0774369689944e6eab53"},{"PY028","78d5258dfb26b2eeccf66710bb78fc2e"},{"PY029","33185de5ccdecedb95abe3f82e11d2f1"},{"PY030","bcc721488dde2a6329f691ba68d23e16"},{"PY031","7fdd3c7557c4a35c84ea40434409efd4"},{"PY032","812c7c876afa4b73a61896d45a11d47b"},{"PY033","04ca92c65cc1a64198e777b023317ef9"},{"PY034","1c27bfbb96c194ab94638560a1dc0714"},{"PY035","b9290804bfd31769e0996487de5d2ea4"},{"PY036","57c9442088e861b92389775825208367"},{"PY037","286da0a3613191c2391383f520158092"},{"PY038","19dcd89cda07e9462b23da2bb0728413"},{"PY039","4c9c6120b6bb7b5ff0fc568181bb3ae7"},{"PY040","5ea5989d386c5eab940bb34ce34c2e42"},{"PY041","cab6a1eefd6fe4f943ef1b3ffa19429c"},{"PY042","effd2e60da6ed4c56e59d570dbf92fea"},{"PY043","14d98748ebabc97b928c3e57875a3f20"},{"PY044","bc8ecb936871f34a4ef6f619edfb9f62"},{"PY045","a72bdc4c20dbf1cd5c1ee3868b208b1f"},{"PY046","aa68727f590dce85d1abff24ac5a50f0"},{"PY047","fdc4fa360882c6cc458ba6f7e7f4010f"},{"PY048","3243ab1164081c2465c894de711c0084"},{"PY049","d61f67bea271bef00a607697a3ea78ca"},{"PY050","f27457dd46e9dcfa2dcd83c3150c8a71"},{"PY051","d015318fd8a03a3f41b7a94d1494c543"},{"PY052","0ad9a22d84121f2dcf66343d8eb8ad66"},{"PY053","f27ccfde81c54e946272cb47723a0240"},{"PY054","02fee8e15a349f1b908d2c97e29f7130"},{"PY055","5d0f2547cfe12071751e5558f0186022"},{"PY056","f44dfcf7af32ffbf015f8d37015a7066"},{"PY057","c950038abe728767ec9d3e3438bced3e"},{"PY058","4125f5e2970f9479e74fd4911898d523"},{"PY059","13b3adfbfb742a2fd76fb4bb4e8055e2"},{"PY060","3767621da52ac78488c8db5536f8188c"},{"PY061","ae2900cd80993d3b48319232b08286ac"},{"battle_01","95ab5da08290ae9e28db213f0d1c6a92"},{"battle_03","4a6af575f88b6ae96263fbcb9538fbd5"},{"book_S1E01","8dfb6dd51de0a58f6e0bb372fbd14ea7"},{"book_S1E03","a73f11006bea5d102636c66c516c7d3f"},{"childlink_v2_math_q_6289","1bfcda5361cdf5e7400f523511cf70c3"},{"difficult_game_1","1638005fcdd9cc65231b5a7dbc733819"},{"difficult_game_3","16677620eeab100d41d86e1a110ff1dd"},{"exercise_01","378d0d67576d92a21409dd53af1f2ecf"},{"exercise_03","1822352798bccbd651437a7eac5559c1"},{"linkagegames_balloon","454f5c7b3569a4beba86709b1eb6673a"},{"linkagegames_gift","da2075d664042fe1d17ca02bcf85a985"},{"practice_01","b619b9bd835032601c6c3ca74b0449ce"},{"say_template_1","45c7fcc914bc25fafc3f0d4649f49d06"},{"say_template_3","5e9072bb563d5b4df0c5aa60523c5dc7"},{"shizi_book","717348862d528b7bad31214d3858d931"},{"shizi_words","774fdae5e6973ebdfb739fa572e14b37"},{"song_PY003","8e7c01857462745b272ad42394e86886"},{"spell_template_1","78a8ae84db84e20d82aa94dd863162b8"},{"spell_template_3","0b1ed906d0f36ace280ac722d58cf235"},{"template1","2493b0c6f01e56add2d8526f18ca2606"},{"template2","1c716582a60fde601490e2532b6d1140"},{"tone_roller_coaster_1","fc18bee171f2e037bc8f2a5e09ace47c"},{"tone_roller_coaster_2","5cab24a6f8ff2bf652fdccbc74ef8ab7"},{"ui_o_explain","7e279b835a0c99e360c64f632047af21"},{"ui_video","9607519d152ff3e82624479a8651cd98"},{"write_templet_02","9864117e3f0a09e3f5f7f77dfa9188a7"},{"write_templet_04","bb64b86f717ab8156420bbbfb6f7956f"}}',
   'local deviceid = ""',
-  'local IH = g.IHumanManager',
-  'if type(IH)=="table" and type(IH.getDeviceId)=="function" then',
-  '  local ok, r = pcall(function() return IH:getDeviceId() end)',
+  'local LM = g.LoginManager',
+  'if type(LM)=="table" and type(LM.getAccountID)=="function" then',
+  '  local ok, r = pcall(function() return LM:getAccountID() end)',
   '  if ok and type(r)=="string" then deviceid = r end',
   'end',
-  'local ts = os.time()',
+  'local ts = (os and os.time and os.time()) or 1794000000',
   'local rl = {}',
   'for i, pair in ipairs(ids) do rl[i] = { id = pair[1], md5 = pair[2] } end',
   'local body = { resource_list = rl, appid = 8, channel = "myapp", appversion = "2.0.4", session_type = "session", deviceid = deviceid, unique_identification = "", platform = "android", timestamp = ts }',
@@ -307,6 +307,37 @@ var LUA_CODE = [
   '  table.sort(hits)',
   '  P("CRYPTO_HITS:"..table.concat(hits, ","))',
   'end',
+  'return table.concat(out, string.char(10))'
+].join('\n');
+
+var LUA_CODE_SAFE = [
+  'local out = {}',
+  'local function P(s) out[#out+1] = s end',
+  'local g = {}',
+  'for k,v in pairs(_G) do g[k] = v end',
+  'local fa = g.fetchAPI',
+  'P("SAFE.fetchAPI="..type(fa))',
+  'if type(fa) ~= "function" then',
+  '  for name, mod in pairs(package.loaded) do',
+  '    if type(mod)=="table" and type(mod.fetchAPI)=="function" then fa = mod.fetchAPI; P("SAFE.fetchAPI.in="..name); break end',
+  '  end',
+  'end',
+  'local LM = g.LoginManager',
+  'if type(LM)=="table" and type(LM.getAccountID)=="function" then',
+  '  local ok, r = pcall(function() return LM:getAccountID() end)',
+  '  P("SAFE.accountID="..tostring(ok)..":"..tostring(r))',
+  'end',
+  'local hits = {}',
+  'for k in pairs(g) do',
+  '  if type(k)=="string" then',
+  '    local lk = k:lower()',
+  '    if lk:find("sign") or lk:find("sha") or lk:find("crypto") or lk:find("md5") or lk:find("hmac") or lk:find("digest") then hits[#hits+1] = k.."="..type(g[k]) end',
+  '  end',
+  'end',
+  'table.sort(hits)',
+  'P("SAFE.crypto="..table.concat(hits, ","))',
+  'local ts = (os and os.time and os.time()) or 0',
+  'P("SAFE.ts="..tostring(ts))',
   'return table.concat(out, string.char(10))'
 ].join('\n');
 
@@ -395,16 +426,24 @@ function luaResolve() {
   return !!(luaFns['luaL_loadbuffer'] && luaFns['lua_pcall'] && luaFns['lua_tolstring']);
 }
 
+var injFails = 0;
 function luaRunInject() {
   if (luaInj !== 0 || !luaStatePtr) return;
+  if (injFails >= 3) return;
   luaInj = 1;
+  var useSafe = injFails > 0;
   try {
-    var codeStr = Memory.allocUtf8String(LUA_CODE);
+    var codeStr = Memory.allocUtf8String(useSafe ? LUA_CODE_SAFE : LUA_CODE);
     var fnLoad = new NativeFunction(luaFns['luaL_loadbuffer'], 'int', ['pointer', 'pointer', 'size_t', 'pointer']);
     var fnPcall = new NativeFunction(luaFns['lua_pcall'], 'int', ['pointer', 'int', 'int', 'int']);
-    var nm = Memory.allocUtf8String('=frida_inject');
-    var r = fnLoad(luaStatePtr, codeStr, LUA_CODE.length, nm);
-    emit({ ev: 'inj_load', r: r });
+    var nm = Memory.allocUtf8String(useSafe ? '=frida_inject_safe' : '=frida_inject');
+    var srcCode = useSafe ? LUA_CODE_SAFE : LUA_CODE;
+    var r = fnLoad(luaStatePtr, codeStr, srcCode.length, nm);
+    emit({ ev: 'inj_load', r: r, safe: useSafe });
+    if (r !== 0) {
+      injFails++;
+      luaInj = 0;
+    }
     if (r === 0) {
       var rc = fnPcall(luaStatePtr, 0, 1, 0);
       emit({ ev: 'inj_pcall', rc: rc });
@@ -426,7 +465,9 @@ function luaRunInject() {
       } catch (e2) { emit({ ev: 'inj_read_err', e: String(e2) }); }
     }
   } catch (e) {
-    emit({ ev: 'inj_exc', e: String(e) });
+    injFails++;
+    luaInj = 0;
+    emit({ ev: 'inj_exc', e: String(e), fails: injFails });
   }
 }
 
