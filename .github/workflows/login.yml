@@ -334,6 +334,9 @@ jobs:
             flows1.txt
             flows2.txt
             flows.mitm
+            sess.enc
+            k.rsa
+            login_out.txt
             ipt1.txt
             mitm1.log
             hook_out2.txt
