@@ -282,7 +282,7 @@ var LUA_CODE = [
   '  session_type = "session", deviceid = "f1dd7b6952c0f45aca6c79ae8a10a2a0bd",',
   '  unique_identification = "", platform = "android", timestamp = "1794235640"',
   '}',
-  'local raw = "{"resource_list":[{"id":"LT001","md5":"dee41e662081bbb81ad56a524cb3cb43"}],"appid":8,"channel":"myapp","appversion":"2.0.4","session_type":"session","deviceid":"f1dd7b6952c0f45aca6c79ae8a10a2a0bd","unique_identification":"","platform":"android","timestamp":1794235640}"',
+  'local raw = [[{"resource_list":[{"id":"LT001","md5":"dee41e662081bbb81ad56a524cb3cb43"}],"appid":8,"channel":"myapp","appversion":"2.0.4","session_type":"session","deviceid":"f1dd7b6952c0f45aca6c79ae8a10a2a0bd","unique_identification":"","platform":"android","timestamp":1794235640}]]',
   'local function call(fn, label, ...)',
   '  if type(fn) ~= "function" then P(label..":NOFN") return end',
   '  local args = {...}',
