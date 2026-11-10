@@ -1,23 +1,21 @@
 'use strict';
 /*
- * Generic Lua RPC over frida: reads /data/local/tmp/lua_cmd.lua, arms on
- * s_luaState, executes the chunk with retry on crash, sends back the string.
+ * Generic Lua RPC v2: reads /data/local/tmp/lua_cmd.lua, arms on s_luaState,
+ * executes the chunk, writes result to a process-writable file so the host
+ * can read it with docker exec (immune to frida message-channel timeouts).
  */
 var CMD_PATH = '/data/local/tmp/lua_cmd.lua';
+var OUT_PATH = '/data/user/0/com.ihuman.pinyin/files/frida_out.txt';
 var LUA_CODE = '';
 var luaStatePtr = null;
 var luaFns = {};
-var luaCalls = 0;
 var luaInj = 0;
 var injFails = 0;
-var jsRetryStarted = false;
 var done = false;
 
 try {
   LUA_CODE = File.readAllText(CMD_PATH);
-} catch (e) {
-  send({ ev: 'cmd_read_err', e: String(e) });
-}
+} catch (e) {}
 
 function findAny(name) {
   var mods = [];
@@ -29,18 +27,21 @@ function findAny(name) {
   return null;
 }
 
-function luaResolve() {
-  ['luaL_loadbuffer', 'lua_pcall', 'lua_tolstring'].forEach(function (n) {
-    if (luaFns[n]) return;
-    var q = findAny(n);
-    if (q) luaFns[n] = q;
-  });
-  return !!(luaFns['luaL_loadbuffer'] && luaFns['lua_pcall'] && luaFns['lua_tolstring']);
+function writeOut(txt) {
+  try {
+    var f = new File(OUT_PATH, 'w');
+    f.write(txt);
+    f.flush();
+    f.close();
+    send({ ev: 'wrote', len: txt.length });
+  } catch (e) {
+    send({ ev: 'write_err', e: String(e) });
+  }
 }
 
 function luaRunInject() {
   if (done || luaInj !== 0 || !luaStatePtr || !LUA_CODE) return;
-  if (injFails >= 4) { send({ ev: 'giveup', fails: injFails }); done = true; return; }
+  if (injFails >= 4) { writeOut('ERR:giveup ' + injFails); done = true; return; }
   luaInj = 1;
   try {
     var codeStr = Memory.allocUtf8String(LUA_CODE);
@@ -48,35 +49,42 @@ function luaRunInject() {
     var fnPcall = new NativeFunction(luaFns['lua_pcall'], 'int', ['pointer', 'int', 'int', 'int']);
     var nm = Memory.allocUtf8String('=luacall');
     var r = fnLoad(luaStatePtr, codeStr, LUA_CODE.length, nm);
-    send({ ev: 'load', r: r });
     if (r !== 0) { injFails++; luaInj = 0; return; }
     var rc = fnPcall(luaStatePtr, 0, 1, 0);
-    send({ ev: 'pcall', rc: rc });
     try {
       var fnToStr = new NativeFunction(luaFns['lua_tolstring'], 'pointer', ['pointer', 'int', 'pointer']);
       var szp = Memory.alloc(8);
       var ps = fnToStr(luaStatePtr, -1, szp);
       if (!ps.isNull()) {
         var len = szp.readU64().toNumber();
-        send({ ev: 'result', txt: ps.readUtf8String(Math.min(len, 60000)) || '' });
+        var txt = ps.readUtf8String(Math.min(len, 60000)) || '';
+        writeOut('OK:' + rc + ':' + txt);
         done = true;
       } else {
-        send({ ev: 'nostr', rc: rc });
-        if (rc === 0) done = true;
-        else { injFails++; luaInj = 0; }
+        writeOut('ERR:nostr rc=' + rc);
+        if (rc === 0) done = true; else { injFails++; luaInj = 0; }
       }
-    } catch (e2) { send({ ev: 'read_err', e: String(e2) }); injFails++; luaInj = 0; send({ ev: 'nostr' }); }
+    } catch (e2) {
+      injFails++; luaInj = 0;
+      writeOut('ERR:read ' + String(e2));
+    }
   } catch (e) {
     injFails++;
     luaInj = 0;
-    send({ ev: 'exc', e: String(e), fails: injFails });
+    writeOut('ERR:exc ' + String(e));
   }
 }
 
 function armLua() {
-  if (!luaResolve()) return;
+  if (!findAny('luaL_loadfile')) return;
   if (armLua.done) return;
   armLua.done = true;
+  ['luaL_loadbuffer', 'lua_pcall', 'lua_tolstring'].forEach(function (n) {
+    if (luaFns[n]) return;
+    var q = findAny(n);
+    if (q) luaFns[n] = q;
+  });
+  if (!luaFns['luaL_loadbuffer'] || !luaFns['lua_pcall'] || !luaFns['lua_tolstring']) return;
   var slot = null;
   try {
     var mods = Process.enumerateModules();
@@ -91,25 +99,20 @@ function armLua() {
     }
   } catch (e) {}
   if (slot) {
-    var iv = setInterval(function () {
+    setInterval(function () {
       if (luaStatePtr) return;
       try {
         var p = slot.readPointer();
-        if (!p.isNull()) { luaStatePtr = p; send({ ev: 'state', p: p.toString() }); }
+        if (!p.isNull()) luaStatePtr = p;
       } catch (e) {}
     }, 500);
   }
   send({ ev: 'armed', slot: !!slot, hasCode: !!LUA_CODE });
 }
 
-var ivA = setInterval(armLua, 500);
-var ticks = 0;
-var ivB = setInterval(function () {
-  ticks++;
-  if (ticks > 2400) { clearInterval(ivA); clearInterval(ivB); return; }
+setInterval(armLua, 500);
+setInterval(function () {
   if (luaStatePtr && luaInj === 0 && !done) {
-    if (!jsRetryStarted) { jsRetryStarted = true; }
     try { luaRunInject(); } catch (e) {}
   }
 }, 500);
-setTimeout(function () { send({ ev: 'final', done: done, fails: injFails }); }, 90000);
