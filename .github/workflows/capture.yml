@@ -17,7 +17,16 @@ jobs:
           sudo mkdir -p /dev/binderfs
           sudo mount -t binder binder /dev/binderfs
           ls -la /dev/binderfs | head -8
-          command -v adb || { timeout 300 bash -c 'sudo apt-get update -qq && sudo apt-get install -y -qq adb'; }
+          command -v adb || timeout 150 bash -c 'sudo apt-get update -qq && sudo apt-get install -y -qq adb' || {
+            echo "apt adb unavailable, fetching static aarch64 build"
+            curl -sSL -m 240 -o /tmp/st.zip https://github.com/lzhiyong/android-sdk-tools/releases/download/35.0.2/android-sdk-tools-static-aarch64.zip
+            rm -rf /tmp/st && mkdir -p /tmp/st
+            python3 -c "import zipfile;zipfile.ZipFile('/tmp/st.zip').extractall('/tmp/st')"
+            ADB_BIN=$(find /tmp/st -name adb -type f | head -1)
+            echo "adb candidate: $ADB_BIN"
+            sudo install -m755 "$ADB_BIN" /usr/local/bin/adb
+          }
+          command -v adb; adb version | head -2
           command -v xz
           command -v python3
           echo binder-ok
