@@ -97,36 +97,44 @@ def spawn_app(dev):
     raise RuntimeError("spawn failed")
 
 
-_phase_n = [0]
+def js_str(text):
+    return json.dumps(text)
 
 
-def run_phase(chunk, tag, timeout=150, quiet=False):
-    _phase_n[0] += 1
-    uniq = "%s.%d" % (tag, _phase_n[0])
-    print("PHASE", uniq, "start", flush=True)
-    guest_rm(OUT_PATH)
-    guest_write(CMD_PATH, "TAG:%s\n%s" % (uniq, chunk))
+def phase_script(tag, chunk):
+    src = open("tools/luaphase.js", encoding="utf-8").read()
+    src = src.replace("'__TAG__'", js_str(tag))
+    src = src.replace("__CHUNK__", js_str(chunk))
+    return src
+
+
+def read_out(tag):
+    return guest_cat("/data/user/0/com.ihuman.pinyin/files/out_%s.txt" % tag)
+
+
+def open_gate(tag):
+    guest_write("/data/local/tmp/%s.gate" % tag, "1")
+
+
+def wait_out(tag, timeout=150, quiet=False):
     t0 = time.time()
     result = None
     while time.time() - t0 < timeout:
         time.sleep(2)
-        raw = guest_cat(OUT_PATH)
+        raw = read_out(tag)
         if not raw:
             continue
         if raw.startswith("OK:"):
-            parts = raw.split(":", 3)
-            if len(parts) >= 3 and parts[2] == uniq:
-                result = parts[3] if len(parts) > 3 else ""
-                break
-        elif raw.startswith("ERR:"):
             parts = raw.split(":", 2)
-            if len(parts) >= 2 and parts[1] == uniq:
-                print("PHASE", uniq, "err:", raw[:200], flush=True)
-                break
+            result = parts[2] if len(parts) > 2 else ""
+            break
+        if raw.startswith("ERR:"):
+            print("PHASE", tag, "err:", raw[:200], flush=True)
+            break
     if not quiet:
-        print("PHASE", uniq, "result:", (result or "<none>")[:800], flush=True)
+        print("PHASE", tag, "result:", (result or "<none>")[:800], flush=True)
     else:
-        print("PHASE", uniq, "done quiet" if result is not None else "empty", flush=True)
+        print("PHASE", tag, "done quiet" if result is not None else "empty", flush=True)
     return result
 
 
@@ -334,13 +342,27 @@ def main():
         print("DETACHED", reason, flush=True)
     sess.on("detached", on_detached)
 
-    # clear stale command file so the daemon cannot execute an old chunk on boot
-    guest_rm(CMD_PATH)
+    # clear stale gates/results so nothing executes on boot
+    subprocess.run(["sudo", "docker", "exec", "redroid", "/system/bin/sh", "-c",
+                    "rm -f /data/local/tmp/*.gate /data/local/tmp/otp.txt"], check=False,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for t in ("send", "login", "state", "secret", "sample"):
+        guest_rm("/data/user/0/com.ihuman.pinyin/files/out_%s.txt" % t)
 
-    # load everything while the app is still suspended
-    for name, path in (("HIDE", "tools/hide.js"),
-                       ("BRIDGE", "tools/loadfile.js"),
-                       ("DAEMON", "tools/luadaemon.js")):
+    otp_holder = {"otp": ""}
+
+    def login_chunk():
+        return chunk_login(phone, "__OTP__")
+
+    phases = [
+        ("send", chunk_send(phone), False),
+        ("login", login_chunk(), False),
+        ("state", chunk_state(), False),
+        ("secret", chunk_secret(), True),
+        ("sample", chunk_sample(), False),
+    ]
+    scripts = []
+    for name, path in (("HIDE", "tools/hide.js"), ("BRIDGE", "tools/loadfile.js")):
         try:
             src = open(path, encoding="utf-8").read()
             if name == "BRIDGE":
@@ -350,49 +372,48 @@ def main():
             print(name + "_OK", flush=True)
         except Exception as e:
             print(name + "_FAIL", str(e)[:200], flush=True)
+    for tag, chunk, _q in phases:
+        try:
+            sc = sess.create_script(phase_script(tag, chunk))
+            sc.load()
+            scripts.append(sc)
+            print("PHASE_SCRIPT_OK", tag, flush=True)
+        except Exception as e:
+            print("PHASE_SCRIPT_FAIL", tag, str(e)[:200], flush=True)
 
     dev.resume(pid)
     time.sleep(40)
     tapper()
     time.sleep(10)
 
-    sent = False
-    for attempt in range(4):
-        res = run_phase(chunk_send(phone), "send%d" % attempt, timeout=120) or ""
-        if "SEND:true" in res:
-            sent = True
-            break
-        if "NOFN" in res:
-            print("IHM not ready, retry in 20s", flush=True)
-            time.sleep(20)
-            continue
-        print("SEND_ERR_RESULT", res[:200], flush=True)
-        break
-    if not sent:
-        print("SEND_FAILED", flush=True)
+    open_gate("send")
+    res = wait_out("send", timeout=120) or ""
+    if "SEND:true" not in res:
+        print("SEND_FAILED", res[:200], flush=True)
         return 3
+    print("SMS_SENT", flush=True)
 
     otp = fetch_otp(otp_url, deadline_s=600)
     if not otp:
         print("FLOW_ABORT no otp", flush=True)
         return 2
-    res = run_phase(chunk_login(phone, otp), "login", timeout=120) or ""
+    guest_write("/data/local/tmp/otp.txt", otp)
+    open_gate("login")
+    res = wait_out("login", timeout=120) or ""
     print("LOGIN_DISPATCHED", flush=True)
     time.sleep(25)
     tapper()
     time.sleep(6)
-    run_phase(chunk_state(), "state", timeout=90)
-    sec = run_phase(chunk_secret(), "secret", timeout=90, quiet=True)
+    open_gate("state")
+    wait_out("state", timeout=90)
+    open_gate("secret")
+    sec = wait_out("secret", timeout=90, quiet=True)
     if sec:
         encrypt_secret(sec)
     else:
         print("SECRET_EMPTY", flush=True)
-    for attempt in range(3):
-        res = run_phase(chunk_sample(), "sample%d" % attempt, timeout=150) or ""
-        if "GETFAIL" not in res and "NOAM" not in res:
-            break
-        print("SAMPLE_RETRY in 25s", flush=True)
-        time.sleep(25)
+    open_gate("sample")
+    wait_out("sample", timeout=150)
     print("SAMPLE_TRIGGERED; waiting 90s for auth+downloads", flush=True)
     time.sleep(90)
     try:
