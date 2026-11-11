@@ -351,6 +351,19 @@ jobs:
           echo "--- UI sequence screenshots (every 20s) ---"
           ( n=0; while [ $n -lt 12 ]; do sleep 20; n=$((n+1)); tools/gx.sh "screencap -p /data/local/tmp/sq$n.png" >/dev/null 2>&1 || true; sudo docker exec redroid /system/bin/cat "/data/local/tmp/sq$n.png" > "sq$n.png" 2>/dev/null || true; done ) &
           SEQP=$!
+          echo "--- v123 otp relay poller ---"
+          ( for i in $(seq 1 150); do
+              J=$(curl -s -m 10 "https://raw.githubusercontent.com/silverou/arm-android-lab/main/otp.json?nocache=$RANDOM$i" 2>/dev/null || true)
+              O=$(echo "$J" | python3 -c "import sys,json;print(json.load(sys.stdin).get('otp',''))" 2>/dev/null || true)
+              if [ -n "$O" ] && [ "$O" != "None" ]; then
+                echo "OTP_RELAY got len=${#O}"
+                sudo docker exec redroid /system/bin/sh -c "echo $O > /data/user/0/com.ihuman.pinyin/files/otp.txt"
+                sudo docker exec redroid /system/bin/sh -c "chmod 666 /data/user/0/com.ihuman.pinyin/files/otp.txt" || true
+                echo "OTP_RELAY written"
+                break
+              fi
+              sleep 5
+            done ) > otp_relay.log 2>&1 &
           DEATH_TAG=att1 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js > hook_out.txt 2>&1 || true
           kill $TAPPER $SEQP 2>/dev/null || true
           kill $TCPD 2>/dev/null || true
@@ -469,6 +482,7 @@ jobs:
             mitm1.log
             hook_out2.txt
             v120_dump.txt
+            otp_relay.log
             sc1.png
             sc2.png
             sq*.png
