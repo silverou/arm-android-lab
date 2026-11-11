@@ -116,22 +116,26 @@ def open_gate(tag):
     guest_write("/data/local/tmp/%s.gate" % tag, "1")
 
 
-def queue_run(tag):
-    guest_write("/data/local/tmp/lua_queue.txt", "RUN:%s" % tag)
-
-
-def wait_out(tag, timeout=150, quiet=False):
+def run_phase(rs, tag, chunk, timeout=150, quiet=False, pinger=None):
+    """Post a run command to the RPC script and wait for the result file."""
+    print("PHASE", tag, "start", flush=True)
+    outp = "/data/user/0/com.ihuman.pinyin/files/out_%s.txt" % tag
+    guest_rm(outp)
+    try:
+        rs.post({"type": "cmd", "action": "run", "tag": tag, "chunk": chunk})
+    except Exception as e:
+        print("POST_FAIL", tag, str(e)[:200], flush=True)
+        return None
     t0 = time.time()
     result = None
-    last_hb = 0
     while time.time() - t0 < timeout:
         time.sleep(2)
-        if int(time.time() - t0) - last_hb >= 15:
-            last_hb = int(time.time() - t0)
-            hb = guest_cat("/data/user/0/com.ihuman.pinyin/files/out_HB.txt")
-            if hb:
-                print("HB", hb.strip()[:200], flush=True)
-        raw = guest_cat("/data/user/0/com.ihuman.pinyin/files/out_%s.txt" % tag)
+        if pinger and int(time.time() - t0) % 10 < 3:
+            try:
+                rs.post({"type": "cmd", "action": "ping"})
+            except Exception:
+                pass
+        raw = guest_cat(outp)
         if not raw:
             continue
         if raw.startswith("OK:"):
@@ -363,15 +367,23 @@ def main():
         print("DETACHED", reason, flush=True)
     sess.on("detached", on_detached)
 
-    # clear stale queue/results
+    # clear stale results
     subprocess.run(["sudo", "docker", "exec", "redroid", "/system/bin/sh", "-c",
-                    "rm -f /data/local/tmp/lua_queue.txt /data/local/tmp/otp.txt"], check=False,
+                    "rm -f /data/local/tmp/otp.txt"], check=False,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for t in ("probe", "send", "login", "state", "secret", "sample"):
         guest_rm("/data/user/0/com.ihuman.pinyin/files/out_%s.txt" % t)
-    guest_rm("/data/user/0/com.ihuman.pinyin/files/out_HB.txt")
 
-    # load runner + gate-passing bundles while suspended
+    phases = {
+        "probe": chunk_probe(),
+        "send": chunk_send(phone),
+        "login": chunk_login(phone, "__OTP__"),
+        "state": chunk_state(),
+        "secret": chunk_secret(),
+        "sample": chunk_sample(),
+    }
+
+    # load bundles + RPC runner while suspended
     for name, path in (("HIDE", "tools/hide.js"), ("BRIDGE", "tools/loadfile.js")):
         try:
             src = open(path, encoding="utf-8").read()
@@ -383,17 +395,14 @@ def main():
         except Exception as e:
             print(name + "_FAIL", str(e)[:200], flush=True)
     try:
-        queue = [
-            {"tag": "probe", "chunk": chunk_probe()},
-            {"tag": "send", "chunk": chunk_send(phone)},
-            {"tag": "login", "chunk": chunk_login(phone, "__OTP__")},
-            {"tag": "state", "chunk": chunk_state()},
-            {"tag": "secret", "chunk": chunk_secret()},
-            {"tag": "sample", "chunk": chunk_sample()},
-        ]
-        rsrc = open("tools/luarunner.js", encoding="utf-8").read()
-        rsrc = rsrc.replace("__QUEUE__", json.dumps(queue, ensure_ascii=True))
+        rsrc = open("tools/luarpc.js", encoding="utf-8").read()
         rs = sess.create_script(rsrc)
+
+        def on_msg(m, d):
+            if m.get("type") == "send":
+                p = m.get("payload") or {}
+                print("RPC", json.dumps(p, ensure_ascii=False)[:200], flush=True)
+        rs.on("message", on_msg)
         rs.load()
         print("RUNNER_OK", flush=True)
     except Exception as e:
@@ -405,16 +414,21 @@ def main():
     tapper()
     time.sleep(10)
 
-    # probe first - if the mechanism is broken, abort WITHOUT burning an SMS
-    queue_run("probe")
-    res = wait_out("probe", timeout=90) or ""
+    # ping liveness before burning SMS
+    try:
+        rs.post({"type": "cmd", "action": "ping"})
+    except Exception as e:
+        print("PING_FAIL", str(e)[:200], flush=True)
+        return 5
+    time.sleep(3)
+
+    res = run_phase(rs, "probe", phases["probe"], timeout=90) or ""
     if "PROBE.LM=" not in res and "PROBE.AM=" not in res:
         print("PROBE_FAILED mechanism broken; no SMS sent", flush=True)
         return 5
     print("PROBE_OK", flush=True)
 
-    queue_run("send")
-    res = wait_out("send", timeout=120) or ""
+    res = run_phase(rs, "send", phases["send"], timeout=120) or ""
     if "SEND:true" not in res:
         print("SEND_FAILED", res[:200], flush=True)
         return 3
@@ -425,22 +439,18 @@ def main():
         print("FLOW_ABORT no otp", flush=True)
         return 2
     guest_write("/data/local/tmp/otp.txt", otp)
-    queue_run("login")
-    wait_out("login", timeout=120)
+    run_phase(rs, "login", phases["login"], timeout=120)
     print("LOGIN_DISPATCHED", flush=True)
     time.sleep(25)
     tapper()
     time.sleep(6)
-    queue_run("state")
-    wait_out("state", timeout=90)
-    queue_run("secret")
-    sec = wait_out("secret", timeout=90, quiet=True)
+    run_phase(rs, "state", phases["state"], timeout=90)
+    sec = run_phase(rs, "secret", phases["secret"], timeout=90, quiet=True)
     if sec:
         encrypt_secret(sec)
     else:
         print("SECRET_EMPTY", flush=True)
-    queue_run("sample")
-    wait_out("sample", timeout=150)
+    run_phase(rs, "sample", phases["sample"], timeout=150)
     print("SAMPLE_TRIGGERED; waiting 90s for auth+downloads", flush=True)
     time.sleep(90)
     try:
