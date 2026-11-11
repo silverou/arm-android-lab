@@ -431,6 +431,9 @@ jobs:
           cp flows.txt flows2.txt 2>/dev/null || true
           cp /tmp/flows.mitm flows.mitm 2>/dev/null || true
           ls -la flows1.txt flows2.txt flows.mitm 2>/dev/null || true
+          echo "--- v120 lua dump ---"
+          sudo docker exec redroid /system/bin/cat /data/user/0/com.ihuman.pinyin/files/v120_dump.txt > v120_dump.txt 2>/dev/null || true
+          wc -c v120_dump.txt 2>/dev/null || true
           echo "===== crash markers ====="
           tools/gx.sh "logcat -d -v time" > logcat_frida.txt 2>/dev/null || true
           grep -aE "0xdead|Fatal signal" logcat_frida.txt | grep -av launcher3 | grep -av systemui | tail -10 || true
@@ -465,6 +468,7 @@ jobs:
             ipt1.txt
             mitm1.log
             hook_out2.txt
+            v120_dump.txt
             sc1.png
             sc2.png
             sq*.png
