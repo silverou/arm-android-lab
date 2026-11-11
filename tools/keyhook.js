@@ -299,14 +299,14 @@ var LUA_CODE = [
   '  return e',
   'end',
   'pcall(function() local f = io.open(DIR.."otp.txt", "a"); if f then f:close() end end)',
-  'append("v120_dump.txt", "V125_START app_uid="..tostring(_G and 0))',
+  'append("v120_dump.txt", "V126_START")',
   'local PHONE = "13662416252"',
   'local tick = 0',
   'local smsDone = exists("sms_sent.flag")',
   'local loginStarted = false',
   'local logged = false',
   'local ptr = 1',
-  'local OTP_PATHS = {DIR.."otp.txt", "/data/data/com.ihuman.pinyin/files/otp.txt", "/data/local/tmp/otp.txt"}',
+  'local OTP_PATHS = {DIR.."otp.txt", "/data/data/com.ihuman.pinyin/files/otp.txt"}',
   'local ids = {"PY002","PY003","PY004","PY005","PY006","PY007","PY008","PY009","PY010","PY011","PY012","PY013","PY014","PY015","PY016","PY017","PY018","PY019","PY020","PY021","PY022","PY023","PY024","PY025","PY026","PY027","PY028","PY029","PY030","PY031","PY032","PY033","PY034","PY035","PY036","PY037","PY038","PY039","PY040","PY041","PY042","PY043","PY044","PY045","PY046","PY047","PY048","PY049","PY050","practice_01","practice_02","practice_03","practice_05","exercise_02","exercise_03","book_S1E02","book_S1E03","book_S1E05","book_S1E10","battle_02","battle_03","difficult_game_2","song_PY002","song_PY003","say_template_2","spell_template_2","shizi_radical","linkagegames_common"}',
   'local function scanTbl(tag, t, depth)',
   '  if type(t) ~= "table" or depth <= 0 then return end',
@@ -314,10 +314,7 @@ var LUA_CODE = [
   '  for k, v in pairs(t) do',
   '    if type(v) == "string" and #v > 3 and #v < 500 then',
   '      local lk = tostring(k):lower()',
-  '      if lk:find("token") or lk:find("session") or lk:find("uid") or lk:find("ticket") or lk:find("account") or lk:find("userid") then',
-  '        append("v120_dump.txt", tag.." T."..tostring(k).."="..v)',
-  '        n = n + 1',
-  '      end',
+  '      if lk:find("token") or lk:find("session") or lk:find("uid") or lk:find("ticket") or lk:find("account") or lk:find("userid") then append("v120_dump.txt", tag.." T."..tostring(k).."="..v); n = n + 1 end',
   '    elseif type(v) == "table" then',
   '      n = n + 1',
   '      if n < 12 then scanTbl(tag.."."..tostring(k), v, depth - 1) end',
@@ -359,7 +356,7 @@ var LUA_CODE = [
   '        append("v120_dump.txt", "SKIP."..id.." installed")',
   '      else',
   '        local ok2, r2 = pcall(function() return a:download() end)',
-  '        append("v120_dump.txt", "DL."..id.."="..tostring(ok2)..":"..type(r2))',
+  '        append("v120_dump.txt", "DL."..id.."="..tostring(ok2))',
   '      end',
   '    else',
   '      append("v120_dump.txt", "GETFAIL."..id)',
@@ -371,10 +368,10 @@ var LUA_CODE = [
   '  if not smsDone then',
   '    smsDone = true',
   '    local smsFn = pick(IHM, "sendSMSWithMobile")',
-  '    append("v120_dump.txt", "V125_TICK_SEND fn="..type(smsFn))',
+  '    append("v120_dump.txt", "V126_SEND_TRY fn="..type(smsFn))',
   '    if type(smsFn) == "function" then',
   '      local ok1, r1 = pcall(function() return smsFn(IHM, PHONE) end)',
-  '      append("v120_dump.txt", "V125_SEND "..tostring(ok1)..":"..tostring(r1))',
+  '      append("v120_dump.txt", "V126_SEND "..tostring(ok1)..":"..tostring(r1))',
   '      pcall(function() local f = io.open(DIR.."sms_sent.flag","w"); if f then f:write("1"); f:close() end end)',
   '    end',
   '    return',
@@ -387,7 +384,7 @@ var LUA_CODE = [
   '      if otp then where = p; break end',
   '    end',
   '    if otp == nil then',
-  '      if tick % 20 == 0 then append("v120_dump.txt", "OTPCHK none tick="..tick) end',
+  '      if tick % 10 == 0 then append("v120_dump.txt", "OTPCHK none tick="..tick) end',
   '      return',
   '    end',
   '    otp = otp:gsub("%s+", "")',
@@ -413,23 +410,56 @@ var LUA_CODE = [
   '    if type(f) == "function" then local ok, r = pcall(f, LM); if ok and r ~= nil and tostring(r) ~= "" then acc = tostring(r) end end',
   '    if acc and not logged then',
   '      logged = true',
-  '      append("v120_dump.txt", "V125_LOGGED acc="..acc)',
+  '      append("v120_dump.txt", "V126_LOGGED acc="..acc)',
   '      dumpState("LOGGED")',
   '    end',
-  '    if tick % 25 == 0 then dumpState("T"..tick) end',
-  '    if logged and ptr <= #ids then harvestRound(5) end',
+  '    if tick % 10 == 0 then dumpState("T"..tick) end',
+  '    if logged and ptr <= #ids then harvestRound(3) end',
   '  end',
   'end',
+  '_G.__PB = {step = step}',
   'local okSched = pcall(function()',
   '  local d = cc.Director:getInstance()',
-  '  local sch = d:getScheduler()',
-  '  sch:scheduleScriptFunc(step, 1.2, false)',
+  '  d:getScheduler():scheduleScriptFunc(step, 1.2, false)',
   '  return true',
   'end)',
-  'append("v120_dump.txt", "V125_SCHED="..tostring(okSched))',
-  'P("SCHED="..tostring(okSched))',
+  'append("v120_dump.txt", "V126_SCHED="..tostring(okSched))',
+  'local okFirst = pcall(step)',
+  'append("v120_dump.txt", "V126_FIRST="..tostring(okFirst))',
   'return table.concat(out, string.char(10))'
 ].join('\n');
+
+var LUA_TICK = [
+  'local s = _G.__PB',
+  'if type(s) == "table" and type(s.step) == "function" then',
+  '  local ok, err = pcall(s.step)',
+  '  if not ok then return "T:ERR:"..tostring(err) end',
+  '  return "T:OK"',
+  'end',
+  'return "T:NOSTATE"'
+].join('\n');
+
+var lastTickAt = 0, tickBusy = false, tickN = 0;
+function maybeTick() {
+  if (luaInj === 0 || !luaStatePtr || tickBusy) return;
+  var now = Date.now();
+  if (now - lastTickAt < 1200) return;
+  lastTickAt = now;
+  tickBusy = true;
+  try {
+    var codeStr = Memory.allocUtf8String(LUA_TICK);
+    var fnLoad = new NativeFunction(luaFns['luaL_loadbuffer'], 'int', ['pointer', 'pointer', 'size_t', 'pointer']);
+    var fnPcall = new NativeFunction(luaFns['lua_pcall'], 'int', ['pointer', 'int', 'int', 'int']);
+    var nm = Memory.allocUtf8String('=frida_tick');
+    var r = fnLoad(luaStatePtr, codeStr, LUA_TICK.length, nm);
+    if (r === 0) {
+      fnPcall(luaStatePtr, 0, 0, 0);
+      tickN++;
+      if (tickN % 25 === 0) emit({ ev: 'tick', n: tickN });
+    }
+  } catch (e) { emit({ ev: 'tick_exc', e: String(e) }); }
+  tickBusy = false;
+}
 
 var LUA_CODE2 = [
   'local out = {}',
@@ -642,6 +672,7 @@ function armLua() {
       Interceptor.attach(p, {
         onEnter: function (a) {
           luaCalls++;
+          maybeTick();
           if (!luaStatePtr) {
             luaStatePtr = a[0];
             emit({ ev: 'lua_state', via: n, p: luaStatePtr.toString() });
@@ -670,6 +701,7 @@ function armLua() {
           Interceptor.attach(pj, {
             onEnter: function (a) {
               luaCalls++;
+              maybeTick();
               if (!luaStatePtr) {
                 luaStatePtr = a[0];
                 emit({ ev: 'lua_state', via: 'callJavaStaticMethod', p: luaStatePtr.toString() });
@@ -703,6 +735,7 @@ function armLua() {
             if (!luaStatePtr && !a[0].isNull()) luaStatePtr = a[0];
           } catch (e) {}
           if (luaInj === 0 && luaStatePtr) { emit({ ev: 'lb_inject' }); luaRunInject(); }
+          else if (luaInj !== 0) maybeTick();
         }
       });
       emit({ ev: 'lua_hooked', sym: 'luaLoadBuffer' });
