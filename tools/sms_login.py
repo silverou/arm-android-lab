@@ -116,12 +116,22 @@ def open_gate(tag):
     guest_write("/data/local/tmp/%s.gate" % tag, "1")
 
 
+def queue_run(tag):
+    guest_write("/data/local/tmp/lua_queue.txt", "RUN:%s" % tag)
+
+
 def wait_out(tag, timeout=150, quiet=False):
     t0 = time.time()
     result = None
+    last_hb = 0
     while time.time() - t0 < timeout:
         time.sleep(2)
-        raw = read_out(tag)
+        if int(time.time() - t0) - last_hb >= 15:
+            last_hb = int(time.time() - t0)
+            hb = guest_cat("/data/user/0/com.ihuman.pinyin/files/out_HB.txt")
+            if hb:
+                print("HB", hb.strip()[:200], flush=True)
+        raw = guest_cat("/data/user/0/com.ihuman.pinyin/files/out_%s.txt" % tag)
         if not raw:
             continue
         if raw.startswith("OK:"):
@@ -162,6 +172,17 @@ if not ok then ok, r = pcall(function() return f(phone) end) end
 P("SEND:"..tostring(ok)..":"..tostring(r))
 return table.concat(out, "|")
 """ % phone
+
+
+def chunk_probe():
+    return CHUNK_HEAD + r"""
+local g = {}
+for k, v in pairs(_G) do g[k] = v end
+P("PROBE.LM="..type(g.LoginManager))
+P("PROBE.AM="..type(g.AssetMgr))
+P("PROBE.IHM="..type(IHM))
+return table.concat(out, "|")
+"""
 
 
 def chunk_login(phone, code):
@@ -342,26 +363,15 @@ def main():
         print("DETACHED", reason, flush=True)
     sess.on("detached", on_detached)
 
-    # clear stale gates/results so nothing executes on boot
+    # clear stale queue/results
     subprocess.run(["sudo", "docker", "exec", "redroid", "/system/bin/sh", "-c",
-                    "rm -f /data/local/tmp/*.gate /data/local/tmp/otp.txt"], check=False,
+                    "rm -f /data/local/tmp/lua_queue.txt /data/local/tmp/otp.txt"], check=False,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    for t in ("send", "login", "state", "secret", "sample"):
+    for t in ("probe", "send", "login", "state", "secret", "sample"):
         guest_rm("/data/user/0/com.ihuman.pinyin/files/out_%s.txt" % t)
+    guest_rm("/data/user/0/com.ihuman.pinyin/files/out_HB.txt")
 
-    otp_holder = {"otp": ""}
-
-    def login_chunk():
-        return chunk_login(phone, "__OTP__")
-
-    phases = [
-        ("send", chunk_send(phone), False),
-        ("login", login_chunk(), False),
-        ("state", chunk_state(), False),
-        ("secret", chunk_secret(), True),
-        ("sample", chunk_sample(), False),
-    ]
-    scripts = []
+    # load runner + gate-passing bundles while suspended
     for name, path in (("HIDE", "tools/hide.js"), ("BRIDGE", "tools/loadfile.js")):
         try:
             src = open(path, encoding="utf-8").read()
@@ -372,21 +382,38 @@ def main():
             print(name + "_OK", flush=True)
         except Exception as e:
             print(name + "_FAIL", str(e)[:200], flush=True)
-    for tag, chunk, _q in phases:
-        try:
-            sc = sess.create_script(phase_script(tag, chunk))
-            sc.load()
-            scripts.append(sc)
-            print("PHASE_SCRIPT_OK", tag, flush=True)
-        except Exception as e:
-            print("PHASE_SCRIPT_FAIL", tag, str(e)[:200], flush=True)
+    try:
+        queue = [
+            {"tag": "probe", "chunk": chunk_probe()},
+            {"tag": "send", "chunk": chunk_send(phone)},
+            {"tag": "login", "chunk": chunk_login(phone, "__OTP__")},
+            {"tag": "state", "chunk": chunk_state()},
+            {"tag": "secret", "chunk": chunk_secret()},
+            {"tag": "sample", "chunk": chunk_sample()},
+        ]
+        rsrc = open("tools/luarunner.js", encoding="utf-8").read()
+        rsrc = rsrc.replace("__QUEUE__", json.dumps(queue, ensure_ascii=True))
+        rs = sess.create_script(rsrc)
+        rs.load()
+        print("RUNNER_OK", flush=True)
+    except Exception as e:
+        print("RUNNER_FAIL", str(e)[:300], flush=True)
+        return 4
 
     dev.resume(pid)
     time.sleep(40)
     tapper()
     time.sleep(10)
 
-    open_gate("send")
+    # probe first - if the mechanism is broken, abort WITHOUT burning an SMS
+    queue_run("probe")
+    res = wait_out("probe", timeout=90) or ""
+    if "PROBE.LM=" not in res and "PROBE.AM=" not in res:
+        print("PROBE_FAILED mechanism broken; no SMS sent", flush=True)
+        return 5
+    print("PROBE_OK", flush=True)
+
+    queue_run("send")
     res = wait_out("send", timeout=120) or ""
     if "SEND:true" not in res:
         print("SEND_FAILED", res[:200], flush=True)
@@ -398,21 +425,21 @@ def main():
         print("FLOW_ABORT no otp", flush=True)
         return 2
     guest_write("/data/local/tmp/otp.txt", otp)
-    open_gate("login")
-    res = wait_out("login", timeout=120) or ""
+    queue_run("login")
+    wait_out("login", timeout=120)
     print("LOGIN_DISPATCHED", flush=True)
     time.sleep(25)
     tapper()
     time.sleep(6)
-    open_gate("state")
+    queue_run("state")
     wait_out("state", timeout=90)
-    open_gate("secret")
+    queue_run("secret")
     sec = wait_out("secret", timeout=90, quiet=True)
     if sec:
         encrypt_secret(sec)
     else:
         print("SECRET_EMPTY", flush=True)
-    open_gate("sample")
+    queue_run("sample")
     wait_out("sample", timeout=150)
     print("SAMPLE_TRIGGERED; waiting 90s for auth+downloads", flush=True)
     time.sleep(90)
