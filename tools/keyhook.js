@@ -390,7 +390,6 @@ var LUA_CODE = [
   '      append("v120_dump.txt", "OTP_BAD from="..where.." len="..#otp)',
   '    end',
   '    end',
-  '  end',
   '  local acc = nil',
   '  for _, n in ipairs({"getCurrentUserId","getAccountID"}) do',
   '    if acc == nil then',
