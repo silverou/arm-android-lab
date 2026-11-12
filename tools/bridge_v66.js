@@ -14320,6 +14320,7 @@ std_string_c_str (StdString * self)
     }
     send("hooks-ready");
   };
+  try { globalThis.Java = frida_java_bridge_default; } catch (eJ) {}
   try {
     const JX = frida_java_bridge_default;
     if (JX.performNow) JX.performNow(mainFn);
