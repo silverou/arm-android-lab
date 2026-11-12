@@ -155,7 +155,17 @@ jobs:
           tools/gx.sh "dumpsys power | grep -aE 'mWakefulness|Display Power'" | head -6 || true
           tools/gx.sh "logcat -c" || true
           tools/gx.sh "am start -n com.ihuman.pinyin/org.cocos2dx.lua.AppActivity" || true
-          sleep 45
+          ( for i in $(seq 1 60); do
+              tools/gx.sh "input tap 1108 402" >/dev/null 2>&1 || true
+              sleep 1
+              tools/gx.sh "input tap 592 576" >/dev/null 2>&1 || true
+              sleep 1
+              tools/gx.sh "input tap 1188 76" >/dev/null 2>&1 || true
+              sleep 1
+            done ) &
+          PROBE_TAP=$!
+          sleep 90
+          kill $PROBE_TAP 2>/dev/null || true
           echo "--- pid ---"
           tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
           echo "--- start evidence ---"
@@ -462,6 +472,13 @@ jobs:
                 sleep 1
               done ) &
             TAPPER=$!
+            echo "===== v136b re-pin deviceid before att2 (files now exist) ====="
+            sudo docker cp redroid:/data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag /tmp/dev_mmkv 2>/dev/null || true
+            sudo docker cp redroid:/data/user/0/com.ihuman.pinyin/shared_prefs/Cocos2dxPrefsFile.xml /tmp/dev_prefs.xml 2>/dev/null || true
+            python3 tools/pin_devid.py || true
+            sudo docker cp /tmp/dev_mmkv redroid:/data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag 2>/dev/null || true
+            sudo docker cp /tmp/dev_prefs.xml redroid:/data/user/0/com.ihuman.pinyin/shared_prefs/Cocos2dxPrefsFile.xml 2>/dev/null || true
+            sudo docker exec redroid /system/bin/sh -c 'chown 10070:10070 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag /data/user/0/com.ihuman.pinyin/shared_prefs/Cocos2dxPrefsFile.xml 2>/dev/null; chmod 664 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag /data/user/0/com.ihuman.pinyin/shared_prefs/Cocos2dxPrefsFile.xml 2>/dev/null; grep -c d92c80adf601092db56c8669f8b17e3562 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag /data/user/0/com.ihuman.pinyin/shared_prefs/Cocos2dxPrefsFile.xml' || true
             DEATH_TAG=att2 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js > hook_out2.txt 2>&1 || true
             kill $TAPPER 2>/dev/null || true
             echo "===== hook_out attempt2 (v66) ====="
