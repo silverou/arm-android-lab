@@ -362,8 +362,12 @@ jobs:
           SEQP=$!
           echo "--- v123 otp relay poller ---"
           ( for i in $(seq 1 700); do
-              J=$(curl -s -m 10 "https://raw.githubusercontent.com/silverou/arm-android-lab/main/otp.json?nocache=$RANDOM$i" 2>/dev/null || true)
+              J=$(curl -s -m 10 -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github.raw" "https://api.github.com/repos/silverou/arm-android-lab/contents/otp.json?ref=main" 2>/dev/null || true)
               O=$(echo "$J" | python3 -c "import sys,json;print(json.load(sys.stdin).get('otp',''))" 2>/dev/null || true)
+              if [ -z "$O" ] || [ "$O" = "None" ]; then
+                J=$(curl -s -m 10 "https://raw.githubusercontent.com/silverou/arm-android-lab/main/otp.json?nocache=$RANDOM$i" 2>/dev/null || true)
+                O=$(echo "$J" | python3 -c "import sys,json;print(json.load(sys.stdin).get('otp',''))" 2>/dev/null || true)
+              fi
               if [ -n "$O" ] && [ "$O" != "None" ]; then
                 echo "OTP_RELAY got len=${#O} at $(date +%H:%M:%S)"
                 AUD=$(sudo docker exec redroid /system/bin/sh -c "stat -c %u /data/user/0/com.ihuman.pinyin/files" 2>/dev/null || true)
@@ -374,7 +378,7 @@ jobs:
                 echo "OTP_RELAY written appuid=$AUD at $(date +%H:%M:%S)"
                 break
               fi
-              sleep 5
+              sleep 3
             done ) > otp_relay.log 2>&1 &
           DEATH_TAG=att1 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js > hook_out.txt 2>&1 || true
           kill $TAPPER $SEQP 2>/dev/null || true
