@@ -391,6 +391,10 @@ jobs:
               fi
               sleep 3
             done ) > otp_relay.log 2>&1 &
+          if [ -f nosms ]; then
+            echo "nosms present -> blocking SMS"
+            sudo docker exec redroid /system/bin/sh -c 'echo 1 > /data/user/0/com.ihuman.pinyin/files/no_sms.flag'
+          fi
           DEATH_TAG=att1 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js > hook_out.txt 2>&1 || true
           kill $TAPPER $SEQP 2>/dev/null || true
           kill $TCPD 2>/dev/null || true
@@ -474,6 +478,21 @@ jobs:
           echo "--- v120 lua dump ---"
           sudo docker exec redroid /system/bin/cat /data/user/0/com.ihuman.pinyin/files/v120_dump.txt > v120_dump.txt 2>/dev/null || true
           wc -c v120_dump.txt 2>/dev/null || true
+          echo "===== deviceid storage reverse lookup ====="
+          DEV=$(grep -aoE 'deviceid=[a-f0-9]{32}' flows.txt 2>/dev/null | head -1 | cut -d= -f2 || true)
+          echo "FLOWS_DEVICEID=$DEV"
+          if [ -n "$DEV" ]; then
+            sudo docker exec redroid /system/bin/sh -c "grep -rla $DEV /data/user/0/com.ihuman.pinyin/ 2>/dev/null" > devmatch_files.txt || true
+            cat devmatch_files.txt || true
+            : > devmatch_content.txt
+            while read -r f; do
+              [ -n "$f" ] || continue
+              echo "== $f" >> devmatch_content.txt
+              sudo docker exec redroid /system/bin/cat "$f" 2>/dev/null | head -c 600 >> devmatch_content.txt || true
+              echo >> devmatch_content.txt
+            done < devmatch_files.txt
+            wc -c devmatch_content.txt || true
+          fi
           echo "===== crash markers ====="
           tools/gx.sh "logcat -d -v time" > logcat_frida.txt 2>/dev/null || true
           grep -aE "0xdead|Fatal signal" logcat_frida.txt | grep -av launcher3 | grep -av systemui | tail -10 || true
@@ -510,6 +529,8 @@ jobs:
             hook_out2.txt
             v120_dump.txt
             devdiag.txt
+            devmatch_files.txt
+            devmatch_content.txt
             otp_relay.log
             sc1.png
             sc2.png
