@@ -14320,9 +14320,38 @@ std_string_c_str (StdString * self)
     }
     send("hooks-ready");
   };
-  try { globalThis.Java = frida_java_bridge_default; } catch (eJ) {}
   try {
     const JX = frida_java_bridge_default;
+    const __javaProbe = function () {
+      try {
+        JX.perform(function () {
+          try {
+            const hits = [];
+            JX.enumerateLoadedClasses({
+              onMatch: function (n) { if (/ihuman|hongen|pinyin/i.test(n) && hits.length < 400) hits.push(n); },
+              onComplete: function () {
+                send({ ev: 'jcls', n: hits });
+                for (let k = 0; k < hits.length; k++) {
+                  (function (cn) {
+                    try {
+                      const C = JX.use(cn);
+                      const ms = C.class.getDeclaredMethods();
+                      const names = [];
+                      for (let i = 0; i < ms.length && i < 200; i++) { const mn = ms[i].getName(); if (/device/i.test(mn)) names.push(mn); }
+                      if (names.length) send({ ev: 'jdevm', cls: cn, ms: names });
+                    } catch (e2) {}
+                  })(hits[k]);
+                }
+                send({ ev: 'jdev_done' });
+              }
+            });
+          } catch (e1) { send({ ev: 'jerr', e: String(e1) }); }
+        });
+      } catch (e0) { send({ ev: 'jprobe_err', e: String(e0) }); }
+    };
+    setTimeout(__javaProbe, 25000);
+    setTimeout(__javaProbe, 60000);
+    setTimeout(__javaProbe, 100000);
     if (JX.performNow) JX.performNow(mainFn);
     else frida_java_bridge_default.perform(mainFn);
   } catch (e) {
