@@ -391,6 +391,14 @@ jobs:
               fi
               sleep 3
             done ) > otp_relay.log 2>&1 &
+          echo "===== v136 pin deviceid to trusted d92c80 ====="
+          TRUSTED=d92c80adf601092db56c8669f8b17e3562
+          sudo docker cp redroid:/data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag /tmp/dev_mmkv 2>/dev/null || true
+          sudo docker cp redroid:/data/user/0/com.ihuman.pinyin/shared_prefs/Cocos2dxPrefsFile.xml /tmp/dev_prefs.xml 2>/dev/null || true
+          python3 tools/pin_devid.py || true
+          sudo docker cp /tmp/dev_mmkv redroid:/data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag 2>/dev/null || true
+          sudo docker cp /tmp/dev_prefs.xml redroid:/data/user/0/com.ihuman.pinyin/shared_prefs/Cocos2dxPrefsFile.xml 2>/dev/null || true
+          sudo docker exec redroid /system/bin/sh -c 'chown 10070:10070 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag /data/user/0/com.ihuman.pinyin/shared_prefs/Cocos2dxPrefsFile.xml 2>/dev/null; chmod 664 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag /data/user/0/com.ihuman.pinyin/shared_prefs/Cocos2dxPrefsFile.xml 2>/dev/null; ls -la /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag /data/user/0/com.ihuman.pinyin/shared_prefs/Cocos2dxPrefsFile.xml' || true
           if [ -f nosms ]; then
             echo "nosms present -> blocking SMS"
             sudo docker exec redroid /system/bin/sh -c 'echo 1 > /data/user/0/com.ihuman.pinyin/files/no_sms.flag'
