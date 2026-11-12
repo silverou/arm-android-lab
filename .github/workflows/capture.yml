@@ -361,7 +361,7 @@ jobs:
           ( n=0; while [ $n -lt 12 ]; do sleep 20; n=$((n+1)); tools/gx.sh "screencap -p /data/local/tmp/sq$n.png" >/dev/null 2>&1 || true; sudo docker exec redroid /system/bin/cat "/data/local/tmp/sq$n.png" > "sq$n.png" 2>/dev/null || true; done ) &
           SEQP=$!
           echo "--- v123 otp relay poller ---"
-          ( for i in $(seq 1 190); do
+          ( for i in $(seq 1 700); do
               J=$(curl -s -m 10 "https://raw.githubusercontent.com/silverou/arm-android-lab/main/otp.json?nocache=$RANDOM$i" 2>/dev/null || true)
               O=$(echo "$J" | python3 -c "import sys,json;print(json.load(sys.stdin).get('otp',''))" 2>/dev/null || true)
               if [ -n "$O" ] && [ "$O" != "None" ]; then
