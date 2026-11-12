@@ -413,7 +413,7 @@ jobs:
             echo "nosms present -> blocking SMS"
             sudo docker exec redroid /system/bin/sh -c 'echo 1 > /data/user/0/com.ihuman.pinyin/files/no_sms.flag'
           fi
-          DEATH_TAG=att1 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js > hook_out.txt 2>&1 || true
+          DEATH_TAG=att1 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/jprobe.js > hook_out.txt 2>&1 || true
           kill $TAPPER $SEQP 2>/dev/null || true
           kill $TCPD 2>/dev/null || true
           echo "--- mitm flows dump ---"
@@ -479,7 +479,7 @@ jobs:
             sudo docker cp /tmp/dev_mmkv redroid:/data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag 2>/dev/null || true
             sudo docker cp /tmp/dev_prefs.xml redroid:/data/user/0/com.ihuman.pinyin/shared_prefs/Cocos2dxPrefsFile.xml 2>/dev/null || true
             sudo docker exec redroid /system/bin/sh -c 'chown 10070:10070 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag /data/user/0/com.ihuman.pinyin/shared_prefs/Cocos2dxPrefsFile.xml 2>/dev/null; chmod 664 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag /data/user/0/com.ihuman.pinyin/shared_prefs/Cocos2dxPrefsFile.xml 2>/dev/null; grep -c d92c80adf601092db56c8669f8b17e3562 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag /data/user/0/com.ihuman.pinyin/shared_prefs/Cocos2dxPrefsFile.xml' || true
-            DEATH_TAG=att2 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js > hook_out2.txt 2>&1 || true
+            DEATH_TAG=att2 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/jprobe.js > hook_out2.txt 2>&1 || true
             kill $TAPPER 2>/dev/null || true
             echo "===== hook_out attempt2 (v66) ====="
             tail -40 hook_out2.txt || true
