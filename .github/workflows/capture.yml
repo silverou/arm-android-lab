@@ -163,6 +163,12 @@ jobs:
           echo "--- activity state ---"
           tools/gx.sh "dumpsys activity activities | grep -a -B2 -A6 ihuman" 2>/dev/null | head -30 || true
           tools/gx.sh "logcat -d -v time" > logcat_plain.txt 2>/dev/null || true
+          echo "--- v131 deviceid storage diag ---"
+          sudo docker exec redroid /system/bin/sh -c 'ls -laR /data/user/0/com.ihuman.pinyin/shared_prefs/ 2>/dev/null' > devdiag.txt 2>&1 || true
+          sudo docker exec redroid /system/bin/sh -c 'cat /data/user/0/com.ihuman.pinyin/shared_prefs/*.xml 2>/dev/null' >> devdiag.txt || true
+          sudo docker exec redroid /system/bin/sh -c 'ls -la /data/user/0/com.ihuman.pinyin/files/ 2>/dev/null' >> devdiag.txt || true
+          sudo docker exec redroid /system/bin/sh -c 'grep -rla deviceid /data/user/0/com.ihuman.pinyin/shared_prefs /data/user/0/com.ihuman.pinyin/files 2>/dev/null | head -10' >> devdiag.txt || true
+          wc -c devdiag.txt || true
           tools/gx.sh "am force-stop com.ihuman.pinyin" || true
 
       - name: frida setup
@@ -498,6 +504,7 @@ jobs:
             mitm1.log
             hook_out2.txt
             v120_dump.txt
+            devdiag.txt
             otp_relay.log
             sc1.png
             sc2.png
