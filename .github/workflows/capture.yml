@@ -168,6 +168,8 @@ jobs:
           sudo docker exec redroid /system/bin/sh -c 'cat /data/user/0/com.ihuman.pinyin/shared_prefs/*.xml 2>/dev/null' >> devdiag.txt || true
           sudo docker exec redroid /system/bin/sh -c 'ls -la /data/user/0/com.ihuman.pinyin/files/ 2>/dev/null' >> devdiag.txt || true
           sudo docker exec redroid /system/bin/sh -c 'grep -rla deviceid /data/user/0/com.ihuman.pinyin/shared_prefs /data/user/0/com.ihuman.pinyin/files 2>/dev/null | head -10' >> devdiag.txt || true
+          sudo docker exec redroid /system/bin/sh -c 'find /data/user/0/com.ihuman.pinyin/ -maxdepth 3 -type f 2>/dev/null | head -40' >> devdiag.txt || true
+          sudo docker exec redroid /system/bin/sh -c 'ls -la /data/user/0/com.ihuman.pinyin/files/.ss/ 2>/dev/null; for f in /data/user/0/com.ihuman.pinyin/files/.ss/*; do echo == $f; head -c 200 $f; echo; done' >> devdiag.txt || true
           wc -c devdiag.txt || true
           tools/gx.sh "am force-stop com.ihuman.pinyin" || true
 
@@ -367,6 +369,8 @@ jobs:
           ( n=0; while [ $n -lt 12 ]; do sleep 20; n=$((n+1)); tools/gx.sh "screencap -p /data/local/tmp/sq$n.png" >/dev/null 2>&1 || true; sudo docker exec redroid /system/bin/cat "/data/local/tmp/sq$n.png" > "sq$n.png" 2>/dev/null || true; done ) &
           SEQP=$!
           echo "--- v123 otp relay poller ---"
+          BASE=$(curl -s -m 10 -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github.raw" "https://api.github.com/repos/silverou/arm-android-lab/contents/otp.json?ref=main" 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin).get('otp',''))" 2>/dev/null || true)
+          echo "OTP_BASELINE='$BASE'"
           ( for i in $(seq 1 700); do
               J=$(curl -s -m 10 -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github.raw" "https://api.github.com/repos/silverou/arm-android-lab/contents/otp.json?ref=main" 2>/dev/null || true)
               O=$(echo "$J" | python3 -c "import sys,json;print(json.load(sys.stdin).get('otp',''))" 2>/dev/null || true)
@@ -374,7 +378,7 @@ jobs:
                 J=$(curl -s -m 10 "https://raw.githubusercontent.com/silverou/arm-android-lab/main/otp.json?nocache=$RANDOM$i" 2>/dev/null || true)
                 O=$(echo "$J" | python3 -c "import sys,json;print(json.load(sys.stdin).get('otp',''))" 2>/dev/null || true)
               fi
-              if [ -n "$O" ] && [ "$O" != "None" ]; then
+              if [ -n "$O" ] && [ "$O" != "None" ] && [ "$O" != "$BASE" ]; then
                 echo "OTP_RELAY got len=${#O} at $(date +%H:%M:%S)"
                 AUD=$(sudo docker exec redroid /system/bin/sh -c "stat -c %u /data/user/0/com.ihuman.pinyin/files" 2>/dev/null || true)
                 sudo docker exec redroid /system/bin/sh -c "echo $O > /data/user/0/com.ihuman.pinyin/files/otp.txt"
