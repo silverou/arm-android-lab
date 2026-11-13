@@ -14343,6 +14343,15 @@ std_string_c_str (StdString * self)
                   })(hits[k]);
                 }
                 send({ ev: 'jdev_done' });
+                try {
+                  const CB = JX.use('com.ihuman.sdk.lib.utils.CacheBean');
+                  const orig = CB.getDevicesId;
+                  CB.getDevicesId.implementation = function () {
+                    send({ ev: 'jdev_hook', was: String(orig.call(this)) });
+                    return 'd92c80adf601092db56c8669f8b17e3562';
+                  };
+                  send({ ev: 'jdev_hook_installed' });
+                } catch (eH) { send({ ev: 'jdev_hook_err', e: String(eH) }); }
               }
             });
           } catch (e1) { send({ ev: 'jerr', e: String(e1) }); }
