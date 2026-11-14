@@ -14451,6 +14451,80 @@ std_string_c_str (StdString * self)
                   send({ ev: 'iha_hooked' });
                 } catch (eI) { send({ ev: 'iha_err', e: String(eI) }); }
                 try {
+                  const HX = /^[0-9a-f]{32,40}$/;
+                  try {
+                    const MK2 = JX.use('com.tencent.mmkv.MMKV');
+                    MK2.decodeString.overloads.forEach(function (ov) {
+                      ov.implementation = function (k) {
+                        const r = ov.call(this, k, arguments.length > 1 ? arguments[1] : null);
+                        try {
+                          const ks = String(k);
+                          if (typeof r === 'string' && HX.test(r) && ks.indexOf('device') < 0) {
+                            send({ ev: 'mkv_hex', k: ks, r: r });
+                          }
+                        } catch (x) {}
+                        return r;
+                      };
+                    });
+                    send({ ev: 'mkv2_hooked' });
+                  } catch (e1) {}
+                  try {
+                    const SPI2 = JX.use('android.app.SharedPreferencesImpl');
+                    SPI2.getAll.overloads.forEach(function (ov) {
+                      ov.implementation = function () {
+                        const m = ov.call(this);
+                        try {
+                          const it = m.keySet().iterator();
+                          const keys = [];
+                          while (it.hasNext()) keys.push(String(it.next()));
+                          if (keys.length) send({ ev: 'sp_getall', n: keys.length, k: keys.join(',') });
+                        } catch (x2) {}
+                        return m;
+                      };
+                    });
+                    SPI2.getString.overloads.forEach(function (ov) {
+                      ov.implementation = function (k, d) {
+                        const r = ov.call(this, k, d);
+                        try {
+                          if (typeof r === 'string' && HX.test(r)) send({ ev: 'sp_hex', k: String(k), r: r });
+                        } catch (x3) {}
+                        return r;
+                      };
+                    });
+                    send({ ev: 'sp2_hooked' });
+                  } catch (e2) {}
+                  try {
+                    const UU = JX.use('java.util.UUID');
+                    const ru = UU.randomUUID;
+                    ru.implementation = function () {
+                      const r = ru.call();
+                      try { send({ ev: 'uuid', v: String(r) }); } catch (x) {}
+                      return r;
+                    };
+                    send({ ev: 'uuid_hooked' });
+                  } catch (e3) {}
+                  try {
+                    const SB = JX.use('java.lang.StringBuilder');
+                    SB.append.overloads.forEach(function (ov) {
+                      ov.implementation = function (s) {
+                        try {
+                          if (s !== null && ov.argumentTypes[0].className === 'java.lang.String') {
+                            const ss = String(s);
+                            if (ss.indexOf('deviceid=') >= 0 && Date.now() - (globalThis.__lastSbLog || 0) > 4000) {
+                              globalThis.__lastSbLog = Date.now();
+                              const Th = JX.use('java.lang.Throwable');
+                              const st = JX.use('android.util.Log').getStackTraceString(Th.$new());
+                              send({ ev: 'sb_dev', s: ss.slice(0, 200), st: String(st).split('\n').slice(2, 16).join(' | ') });
+                            }
+                          }
+                        } catch (x4) {}
+                        return ov.call(this, s);
+                      };
+                    });
+                    send({ ev: 'sb_hooked' });
+                  } catch (e4) { send({ ev: 'sb_err', e: String(e4) }); }
+                } catch (eX) { send({ ev: 'diag_err', e: String(eX) }); }
+                try {
                   const CB = JX.use('com.ihuman.sdk.lib.utils.CacheBean');
                   const orig = CB.getDevicesId;
                   CB.getDevicesId.implementation = function () {
