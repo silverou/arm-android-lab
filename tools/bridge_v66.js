@@ -14344,6 +14344,38 @@ std_string_c_str (StdString * self)
                 }
                 send({ ev: 'jdev_done' });
                 try {
+                  const SPI = JX.use('android.app.SharedPreferencesImpl');
+                  SPI.getString.overloads.forEach(function (ov) {
+                    ov.implementation = function (k, d) {
+                      const r = ov.call(this, k, d);
+                      try {
+                        if ((k === 'accountId' || k === 'userId') && typeof r === 'string' && /^[0-9a-f]{32}$/.test(r)) {
+                          send({ ev: 'sp_dev', k: k, was: r });
+                          return 'd92c80adf601092db56c8669f8b17e3562';
+                        }
+                      } catch (e1) {}
+                      return r;
+                    };
+                  });
+                  send({ ev: 'sp_hook_installed' });
+                } catch (eS) { send({ ev: 'sp_hook_err', e: String(eS) }); }
+                try {
+                  const MK = JX.use('com.tencent.mmkv.MMKV');
+                  MK.decodeString.overloads.forEach(function (ov) {
+                    ov.implementation = function (k, d) {
+                      const r = ov.call(this, k, d);
+                      try {
+                        if (k && String(k).indexOf('deviceId') >= 0 && typeof r === 'string') {
+                          send({ ev: 'mmkv_dev', k: String(k), was: r });
+                          return 'd92c80adf601092db56c8669f8b17e3562';
+                        }
+                      } catch (e2) {}
+                      return r;
+                    };
+                  });
+                  send({ ev: 'mmkv_hook_installed' });
+                } catch (eM) { send({ ev: 'mmkv_hook_err', e: String(eM) }); }
+                try {
                   const CB = JX.use('com.ihuman.sdk.lib.utils.CacheBean');
                   const orig = CB.getDevicesId;
                   CB.getDevicesId.implementation = function () {
