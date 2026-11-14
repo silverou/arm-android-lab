@@ -14525,6 +14525,40 @@ std_string_c_str (StdString * self)
                   } catch (e4) { send({ ev: 'sb_err', e: String(e4) }); }
                 } catch (eX) { send({ ev: 'diag_err', e: String(eX) }); }
                 try {
+                  const T6A = JX.use('t6.a');
+                  const ms2 = T6A.class.getDeclaredMethods();
+                  const nm2 = [];
+                  for (let i = 0; i < ms2.length; i++) nm2.push(ms2[i].getName() + ':' + String(ms2[i].getReturnType().getName()).split('.').pop());
+                  send({ ev: 't6a_methods', n: nm2 });
+                  for (let i = 0; i < ms2.length; i++) {
+                    const mm = ms2[i];
+                    if (mm.getReturnType().getName() !== 'java.lang.String') continue;
+                    const name = mm.getName();
+                    try {
+                      T6A[name].overloads.forEach(function (ov) {
+                        ov.implementation = function () {
+                          const rr = ov.apply(this, arguments);
+                          try {
+                            const cnt = (globalThis.__t6cnt = globalThis.__t6cnt || {});
+                            cnt[name] = (cnt[name] || 0) + 1;
+                            if (cnt[name] <= 20 && typeof rr === 'string') send({ ev: 't6r', m: name, v: rr.length > 140 ? rr.slice(0, 140) : rr });
+                          } catch (q) {}
+                          return rr;
+                        };
+                      });
+                    } catch (q2) {}
+                  }
+                  send({ ev: 't6a_hooked' });
+                } catch (eT) { send({ ev: 't6a_err', e: String(eT) }); }
+                try {
+                  const SBH = JX.use('sb.h');
+                  const ms3 = SBH.class.getDeclaredMethods();
+                  const nm3 = [];
+                  for (let i = 0; i < ms3.length; i++) nm3.push(ms3[i].getName() + ':' + String(ms3[i].getReturnType().getName()).split('.').pop());
+                  send({ ev: 'sbh_methods', n: nm3 });
+                  send({ ev: 'sbh_hooked' });
+                } catch (eU) { send({ ev: 'sbh_err', e: String(eU) }); }
+                try {
                   const CB = JX.use('com.ihuman.sdk.lib.utils.CacheBean');
                   const orig = CB.getDevicesId;
                   CB.getDevicesId.implementation = function () {
