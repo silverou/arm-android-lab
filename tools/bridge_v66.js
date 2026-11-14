@@ -14322,6 +14322,53 @@ std_string_c_str (StdString * self)
   };
   try {
     const JX = frida_java_bridge_default;
+    let __hookInstalled = false;
+    const __tryEarlyHooks = function () {
+      if (__hookInstalled) return;
+      try {
+        JX.perform(function () {
+          if (__hookInstalled) return;
+          let okAny = false;
+          try {
+            const SPI = JX.use('android.app.SharedPreferencesImpl');
+            SPI.getString.overloads.forEach(function (ov) {
+              ov.implementation = function (k, d) {
+                const r = ov.call(this, k, d);
+                try {
+                  if ((k === 'accountId' || k === 'userId') && typeof r === 'string' && /^[0-9a-f]{32,40}$/.test(r)) {
+                    send({ ev: 'sp_dev_early', k: k, was: r });
+                    return 'd92c80adf601092db56c8669f8b17e3562';
+                  }
+                } catch (e1) {}
+                return r;
+              };
+            });
+            okAny = true;
+            send({ ev: 'sp_hook_early' });
+          } catch (eS) {}
+          try {
+            const MK = JX.use('com.tencent.mmkv.MMKV');
+            MK.decodeString.overloads.forEach(function (ov) {
+              ov.implementation = function (k, d) {
+                const r = ov.call(this, k, d);
+                try {
+                  if (k && String(k).indexOf('deviceId') >= 0 && typeof r === 'string' && /^[0-9a-f]{32,40}$/.test(r)) {
+                    send({ ev: 'mmkv_dev_early', k: String(k), was: r });
+                    return 'd92c80adf601092db56c8669f8b17e3562';
+                  }
+                } catch (e2) {}
+                return r;
+              };
+            });
+            okAny = true;
+            send({ ev: 'mmkv_hook_early' });
+          } catch (eM) {}
+          if (okAny) __hookInstalled = true;
+        });
+      } catch (e0) {}
+    };
+    const __earlyTimer = setInterval(__tryEarlyHooks, 800);
+    setTimeout(function () { clearInterval(__earlyTimer); }, 120000);
     const __javaProbe = function () {
       try {
         JX.perform(function () {
@@ -14349,7 +14396,7 @@ std_string_c_str (StdString * self)
                     ov.implementation = function (k, d) {
                       const r = ov.call(this, k, d);
                       try {
-                        if ((k === 'accountId' || k === 'userId') && typeof r === 'string' && /^[0-9a-f]{32}$/.test(r)) {
+                        if ((k === 'accountId' || k === 'userId') && typeof r === 'string' && /^[0-9a-f]{32,40}$/.test(r)) {
                           send({ ev: 'sp_dev', k: k, was: r });
                           return 'd92c80adf601092db56c8669f8b17e3562';
                         }
