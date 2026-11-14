@@ -14423,6 +14423,34 @@ std_string_c_str (StdString * self)
                   send({ ev: 'mmkv_hook_installed' });
                 } catch (eM) { send({ ev: 'mmkv_hook_err', e: String(eM) }); }
                 try {
+                  const IHA = JX.use('org.cocos2dx.lua.IHumanAndroid');
+                  const mlist = IHA.class.getDeclaredMethods();
+                  const names = [];
+                  for (let i = 0; i < mlist.length; i++) names.push(mlist[i].getName());
+                  send({ ev: 'iha_methods', n: names });
+                  for (let i = 0; i < mlist.length; i++) {
+                    const nm = mlist[i].getName();
+                    if (!/login|sms|Sms|Mobile|device|Device/i.test(nm)) continue;
+                    try {
+                      IHA[nm].overloads.forEach(function (ov) {
+                        ov.implementation = function () {
+                          try {
+                            const args = [];
+                            for (let j = 0; j < arguments.length && j < 6; j++) {
+                              const a = arguments[j];
+                              let s = a === null ? 'null' : (typeof a === 'string' ? (a.length > 70 ? a.slice(0, 70) : a) : String(a));
+                              args.push(s);
+                            }
+                            send({ ev: 'iha', m: nm, n: arguments.length, a: args });
+                          } catch (e) {}
+                          return ov.apply(this, arguments);
+                        };
+                      });
+                    } catch (e2) {}
+                  }
+                  send({ ev: 'iha_hooked' });
+                } catch (eI) { send({ ev: 'iha_err', e: String(eI) }); }
+                try {
                   const CB = JX.use('com.ihuman.sdk.lib.utils.CacheBean');
                   const orig = CB.getDevicesId;
                   CB.getDevicesId.implementation = function () {
