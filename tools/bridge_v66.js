@@ -14607,20 +14607,30 @@ std_string_c_str (StdString * self)
                       try {
                         const F = JX.ClassFactory.get(loader);
                         const C = F.use('t6.a');
-                        if (!C.j) return;
-                        C.j.overloads.forEach(function (ov) {
-                          ov.implementation = function () {
-                            const r = ov.apply(this, arguments);
-                            try {
-                              if (typeof r === 'string' && r.indexOf('deviceid=') >= 0) {
-                                const rr = r.replace(/deviceid=[0-9a-f]{32,40}/, 'deviceid=d92c80adf601092db56c8669f8b17e3562');
-                                if (rr !== r) { send({ ev: 't6j_fix', was: r.slice(0, 140) }); return rr; }
-                              }
-                            } catch (q) {}
-                            return r;
-                          };
-                        });
-                        send({ ev: 't6j_hooked' });
+                        const ms = C.class.getDeclaredMethods();
+                        let hn = 0;
+                        for (let mi = 0; mi < ms.length; mi++) {
+                          const mm = ms[mi];
+                          if (mm.getReturnType().getName() !== 'java.lang.String') continue;
+                          const name = mm.getName();
+                          if (!C[name]) continue;
+                          try {
+                            C[name].overloads.forEach(function (ov) {
+                              ov.implementation = function () {
+                                const r = ov.apply(this, arguments);
+                                try {
+                                  if (typeof r === 'string' && r.indexOf('deviceid=') >= 0) {
+                                    const rr = r.replace(/deviceid=[0-9a-f]{32,40}/, 'deviceid=d92c80adf601092db56c8669f8b17e3562');
+                                    if (rr !== r) { send({ ev: 't6x_fix', m: name, was: r.slice(0, 120) }); return rr; }
+                                  }
+                                } catch (q) {}
+                                return r;
+                              };
+                            });
+                            hn++;
+                          } catch (q2) {}
+                        }
+                        send({ ev: 't6x_hooked', n: hn });
                       } catch (e) {}
                     },
                     onComplete: function () { send({ ev: 't6j_done' }); }
