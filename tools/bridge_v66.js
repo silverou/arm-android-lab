@@ -14525,57 +14525,32 @@ std_string_c_str (StdString * self)
                   } catch (e4) { send({ ev: 'sb_err', e: String(e4) }); }
                 } catch (eX) { send({ ev: 'diag_err', e: String(eX) }); }
                 try {
-                  const T6A = JX.use('t6.a');
-                  const ms2 = T6A.class.getDeclaredMethods();
-                  const nm2 = [];
-                  for (let i = 0; i < ms2.length; i++) nm2.push(ms2[i].getName() + ':' + String(ms2[i].getReturnType().getName()).split('.').pop());
-                  send({ ev: 't6a_methods', n: nm2 });
-                  for (let i = 0; i < ms2.length; i++) {
-                    const mm = ms2[i];
-                    if (mm.getReturnType().getName() !== 'java.lang.String') continue;
-                    const name = mm.getName();
+                  const TRUST = 'd92c80adf601092db56c8669f8b17e3562';
+                  const MAPS = ['java.util.HashMap', 'java.util.LinkedHashMap', 'java.util.concurrent.ConcurrentHashMap', 'android.util.ArrayMap'];
+                  let hookedN = 0;
+                  MAPS.forEach(function (cn) {
                     try {
-                      T6A[name].overloads.forEach(function (ov) {
-                        ov.implementation = function () {
-                          const rr = ov.apply(this, arguments);
+                      const M = JX.use(cn);
+                      M.put.overloads.forEach(function (ov) {
+                        ov.implementation = function (k, v) {
                           try {
-                            const cnt = (globalThis.__t6cnt = globalThis.__t6cnt || {});
-                            cnt[name] = (cnt[name] || 0) + 1;
-                            if (cnt[name] <= 20 && typeof rr === 'string') send({ ev: 't6r', m: name, v: rr.length > 140 ? rr.slice(0, 140) : rr });
+                            if (k !== null && typeof k === 'string' && k === 'deviceid') {
+                              if (typeof v === 'string' && /^[0-9a-f]{32,40}$/.test(v)) {
+                                send({ ev: 'map_dev', cls: cn, was: v });
+                                return ov.call(this, k, TRUST);
+                              }
+                            }
                           } catch (q) {}
-                          return rr;
+                          return ov.call(this, k, v);
                         };
                       });
-                    } catch (q2) {}
-                  }
-                  send({ ev: 't6a_hooked' });
-                } catch (eT) { send({ ev: 't6a_err', e: String(eT) }); }
-                try {
-                  const SBH = JX.use('sb.h');
-                  const ms3 = SBH.class.getDeclaredMethods();
-                  const nm3 = [];
-                  for (let i = 0; i < ms3.length; i++) nm3.push(ms3[i].getName() + ':' + String(ms3[i].getReturnType().getName()).split('.').pop());
-                  send({ ev: 'sbh_methods', n: nm3 });
-                  send({ ev: 'sbh_hooked' });
-                } catch (eU) { send({ ev: 'sbh_err', e: String(eU) }); }
-                try {
-                  const seen = [];
-                  JX.enumerateClassLoaders({
-                    onMatch: function (loader) {
-                      try {
-                        const cf = JX.ClassFactory;
-                        cf.loader = loader;
-                        const C = cf.use('t6.a');
-                        const ms = C.class.getDeclaredMethods();
-                        const names = [];
-                        for (let i = 0; i < ms.length; i++) names.push(ms[i].getName() + ':' + String(ms[i].getReturnType().getName()).split('.').pop());
-                        seen.push({ ld: String(loader), n: ms.length, names: names.join(','), src: String(C.class.getProtectionDomain().getCodeSource()) });
-                        cf.loader = null;
-                      } catch (e) {}
-                    },
-                    onComplete: function () { send({ ev: 'lds', n: seen }); }
+                      hookedN++;
+                    } catch (eM) {}
                   });
-                } catch (eL) { send({ ev: 'ld_err', e: String(eL) }); }
+                  send({ ev: 'map_hooked', n: hookedN });
+                } catch (eZ) { send({ ev: 'map_err', e: String(eZ) }); }
+
+
                 try {
                   const CB = JX.use('com.ihuman.sdk.lib.utils.CacheBean');
                   const orig = CB.getDevicesId;
