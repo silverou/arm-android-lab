@@ -14700,6 +14700,28 @@ std_string_c_str (StdString * self)
                     onComplete: function () { send({ ev: 'g0_done' }); }
                   });
                 } catch (eT2) { send({ ev: 'g0_err', e: String(eT2) }); }
+                try {
+                  const TR5 = 'd92c80adf601092db56c8669f8b17e3562';
+                  const STR = JX.use('java.lang.String');
+                  let gh = 0;
+                  STR.getBytes.overloads.forEach(function (ov) {
+                    ov.implementation = function () {
+                      try {
+                        const s = this;
+                        if (s.indexOf('deviceid=') >= 0) {
+                          const rr = String(s).replace(/deviceid=[0-9a-f]{32,40}/, 'deviceid=' + TR5);
+                          if (rr !== String(s)) {
+                            send({ ev: 'gb_fix' });
+                            return ov.apply(JX.use('java.lang.String').$new(rr), arguments);
+                          }
+                        }
+                      } catch (q) {}
+                      return ov.apply(this, arguments);
+                    };
+                  });
+                  gh++;
+                  send({ ev: 'gb_hooked', n: gh });
+                } catch (eG) { send({ ev: 'gb_err', e: String(eG) }); }
 
 
                 try {
