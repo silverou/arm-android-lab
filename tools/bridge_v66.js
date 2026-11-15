@@ -14601,6 +14601,31 @@ std_string_c_str (StdString * self)
                     onComplete: function () { send({ ev: 'ld2_done', n: nm }); }
                   });
                 } catch (eQ) { send({ ev: 'ld2_err', e: String(eQ) }); }
+                try {
+                  JX.enumerateClassLoaders({
+                    onMatch: function (loader) {
+                      try {
+                        const F = JX.ClassFactory.get(loader);
+                        const C = F.use('t6.a');
+                        if (!C.j) return;
+                        C.j.overloads.forEach(function (ov) {
+                          ov.implementation = function () {
+                            const r = ov.apply(this, arguments);
+                            try {
+                              if (typeof r === 'string' && r.indexOf('deviceid=') >= 0) {
+                                const rr = r.replace(/deviceid=[0-9a-f]{32,40}/, 'deviceid=d92c80adf601092db56c8669f8b17e3562');
+                                if (rr !== r) { send({ ev: 't6j_fix', was: r.slice(0, 140) }); return rr; }
+                              }
+                            } catch (q) {}
+                            return r;
+                          };
+                        });
+                        send({ ev: 't6j_hooked' });
+                      } catch (e) {}
+                    },
+                    onComplete: function () { send({ ev: 't6j_done' }); }
+                  });
+                } catch (eR) { send({ ev: 't6j_err', e: String(eR) }); }
 
 
                 try {
