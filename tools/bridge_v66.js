@@ -14722,6 +14722,29 @@ std_string_c_str (StdString * self)
                   gh++;
                   send({ ev: 'gb_hooked', n: gh });
                 } catch (eG) { send({ ev: 'gb_err', e: String(eG) }); }
+                try {
+                  ['po.g', 'd7.c', 'd7.c$a', 'y6.i'].forEach(function (cn) {
+                    JX.enumerateClassLoaders({
+                      onMatch: function (loader) {
+                        try {
+                          const F = JX.ClassFactory.get(loader);
+                          const C = F.use(cn);
+                          const ms = C.class.getDeclaredMethods();
+                          const sig = [];
+                          for (let i = 0; i < ms.length; i++) {
+                            const pt = ms[i].getParameterTypes();
+                            const ps = [];
+                            for (let j = 0; j < pt.length; j++) ps.push(String(pt[j].getName()).split('.').pop());
+                            sig.push(ms[i].getName() + '(' + ps.join(',') + '):' + String(ms[i].getReturnType().getName()).split('.').pop());
+                          }
+                          send({ ev: 'netm', c: cn, n: sig });
+                        } catch (e) {}
+                      },
+                      onComplete: function () {}
+                    });
+                  });
+                  send({ ev: 'netm_done' });
+                } catch (eN) { send({ ev: 'netm_err', e: String(eN) }); }
 
 
                 try {
