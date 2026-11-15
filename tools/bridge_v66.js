@@ -14584,6 +14584,23 @@ std_string_c_str (StdString * self)
                   } catch (eU2) { send({ ev: 'ub_err', e: String(eU2) }); }
                   send({ ev: 'fbub_hooked', n: n2 });
                 } catch (eY) { send({ ev: 'fbub_err', e: String(eY) }); }
+                try {
+                  let nm = 0;
+                  JX.enumerateClassLoaders({
+                    onMatch: function (loader) {
+                      try {
+                        const F = JX.ClassFactory.get(loader);
+                        const C = F.use('t6.a');
+                        const ms = C.class.getDeclaredMethods();
+                        const ns = [];
+                        for (let i = 0; i < ms.length; i++) ns.push(ms[i].getName());
+                        nm++;
+                        send({ ev: 'ld2', i: nm, n: ms.length, names: ns.join(',') });
+                      } catch (e) {}
+                    },
+                    onComplete: function () { send({ ev: 'ld2_done', n: nm }); }
+                  });
+                } catch (eQ) { send({ ev: 'ld2_err', e: String(eQ) }); }
 
 
                 try {
