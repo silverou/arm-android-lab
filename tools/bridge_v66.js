@@ -14526,7 +14526,7 @@ std_string_c_str (StdString * self)
                 } catch (eX) { send({ ev: 'diag_err', e: String(eX) }); }
                 try {
                   const TRUST = 'd92c80adf601092db56c8669f8b17e3562';
-                  const MAPS = ['java.util.HashMap', 'java.util.LinkedHashMap', 'java.util.concurrent.ConcurrentHashMap', 'android.util.ArrayMap'];
+                  const MAPS = ['java.util.TreeMap', 'java.util.HashMap', 'java.util.LinkedHashMap', 'java.util.concurrent.ConcurrentHashMap', 'android.util.ArrayMap', 'androidx.collection.ArrayMap'];
                   let hookedN = 0;
                   MAPS.forEach(function (cn) {
                     try {
