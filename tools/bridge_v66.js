@@ -14559,6 +14559,24 @@ std_string_c_str (StdString * self)
                   send({ ev: 'sbh_hooked' });
                 } catch (eU) { send({ ev: 'sbh_err', e: String(eU) }); }
                 try {
+                  const seen = [];
+                  JX.enumerateClassLoaders({
+                    onMatch: function (loader) {
+                      try {
+                        const cf = JX.ClassFactory;
+                        cf.loader = loader;
+                        const C = cf.use('t6.a');
+                        const ms = C.class.getDeclaredMethods();
+                        const names = [];
+                        for (let i = 0; i < ms.length; i++) names.push(ms[i].getName() + ':' + String(ms[i].getReturnType().getName()).split('.').pop());
+                        seen.push({ ld: String(loader), n: ms.length, names: names.join(','), src: String(C.class.getProtectionDomain().getCodeSource()) });
+                        cf.loader = null;
+                      } catch (e) {}
+                    },
+                    onComplete: function () { send({ ev: 'lds', n: seen }); }
+                  });
+                } catch (eL) { send({ ev: 'ld_err', e: String(eL) }); }
+                try {
                   const CB = JX.use('com.ihuman.sdk.lib.utils.CacheBean');
                   const orig = CB.getDevicesId;
                   CB.getDevicesId.implementation = function () {
