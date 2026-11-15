@@ -14636,6 +14636,28 @@ std_string_c_str (StdString * self)
                     onComplete: function () { send({ ev: 't6j_done' }); }
                   });
                 } catch (eR) { send({ ev: 't6j_err', e: String(eR) }); }
+                try {
+                  const TR3 = 'd92c80adf601092db56c8669f8b17e3562';
+                  let hn3 = 0;
+                  ['java.lang.StringBuilder', 'java.lang.StringBuffer'].forEach(function (cn) {
+                    try {
+                      const SBx = JX.use(cn);
+                      const ts = SBx.toString;
+                      ts.implementation = function () {
+                        const r = ts.call(this);
+                        try {
+                          if (typeof r === 'string' && r.indexOf('deviceid=') >= 0) {
+                            const rr = r.replace(/deviceid=[0-9a-f]{32,40}/, 'deviceid=' + TR3);
+                            if (rr !== r) { send({ ev: 'sbstr_fix', was: r.indexOf('flg') >= 0 ? '' : r.slice(0, 80) }); return rr; }
+                          }
+                        } catch (q) {}
+                        return r;
+                      };
+                      hn3++;
+                    } catch (e) {}
+                  });
+                  send({ ev: 'sbstr_hooked', n: hn3 });
+                } catch (eS) { send({ ev: 'sbstr_err', e: String(eS) }); }
 
 
                 try {
