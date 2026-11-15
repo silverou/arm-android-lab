@@ -14788,6 +14788,29 @@ std_string_c_str (StdString * self)
                     onComplete: function () { send({ ev: 'y6_done' }); }
                   });
                 } catch (eY2) { send({ ev: 'y6_err', e: String(eY2) }); }
+                try {
+                  ['d0', 'g', 'c'].forEach(function (cn) {
+                    JX.enumerateClassLoaders({
+                      onMatch: function (loader) {
+                        try {
+                          const F = JX.ClassFactory.get(loader);
+                          const C = F.use(cn);
+                          const ms = C.class.getDeclaredMethods();
+                          const sig = [];
+                          for (let i = 0; i < ms.length; i++) {
+                            const pt = ms[i].getParameterTypes();
+                            const ps = [];
+                            for (let j = 0; j < pt.length; j++) ps.push(String(pt[j].getName()).split('.').pop());
+                            sig.push(ms[i].getName() + '(' + ps.join(',') + '):' + String(ms[i].getReturnType().getName()).split('.').pop());
+                          }
+                          send({ ev: 'dm', c: cn, n: sig });
+                        } catch (e) {}
+                      },
+                      onComplete: function () {}
+                    });
+                  });
+                  send({ ev: 'dm_done' });
+                } catch (eD) { send({ ev: 'dm_err', e: String(eD) }); }
 
 
                 try {
