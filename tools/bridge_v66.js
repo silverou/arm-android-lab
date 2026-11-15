@@ -14549,6 +14549,41 @@ std_string_c_str (StdString * self)
                   });
                   send({ ev: 'map_hooked', n: hookedN });
                 } catch (eZ) { send({ ev: 'map_err', e: String(eZ) }); }
+                try {
+                  const TRUST2 = 'd92c80adf601092db56c8669f8b17e3562';
+                  let n2 = 0;
+                  try {
+                    const FB = JX.use('okhttp3.FormBody$Builder');
+                    FB.add.overloads.forEach(function (ov) {
+                      ov.implementation = function (k, v) {
+                        try {
+                          if (k === 'deviceid' && typeof v === 'string' && /^[0-9a-f]{32,40}$/.test(v)) {
+                            send({ ev: 'fb_dev', was: v });
+                            return ov.call(this, k, TRUST2);
+                          }
+                        } catch (q) {}
+                        return ov.call(this, k, v);
+                      };
+                    });
+                    n2++;
+                  } catch (eF) { send({ ev: 'fb_err', e: String(eF) }); }
+                  try {
+                    const UB = JX.use('android.net.Uri$Builder');
+                    UB.appendQueryParameter.overloads.forEach(function (ov) {
+                      ov.implementation = function (k, v) {
+                        try {
+                          if (k === 'deviceid' && typeof v === 'string' && /^[0-9a-f]{32,40}$/.test(v)) {
+                            send({ ev: 'ub_dev', was: v });
+                            return ov.call(this, k, TRUST2);
+                          }
+                        } catch (q2) {}
+                        return ov.call(this, k, v);
+                      };
+                    });
+                    n2++;
+                  } catch (eU2) { send({ ev: 'ub_err', e: String(eU2) }); }
+                  send({ ev: 'fbub_hooked', n: n2 });
+                } catch (eY) { send({ ev: 'fbub_err', e: String(eY) }); }
 
 
                 try {
