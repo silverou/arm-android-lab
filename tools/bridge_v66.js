@@ -14745,6 +14745,49 @@ std_string_c_str (StdString * self)
                   });
                   send({ ev: 'netm_done' });
                 } catch (eN) { send({ ev: 'netm_err', e: String(eN) }); }
+                try {
+                  const TR6 = 'd92c80adf601092db56c8669f8b17e3562';
+                  JX.enumerateClassLoaders({
+                    onMatch: function (loader) {
+                      try {
+                        const F = JX.ClassFactory.get(loader);
+                        try {
+                          const Y = F.use('y6.i');
+                          if (Y.b) {
+                            Y.b.overloads.forEach(function (ov) {
+                              ov.implementation = function (m) {
+                                try {
+                                  const M = JX.cast(m, JX.use('java.util.Map'));
+                                  const cur = M.get('deviceid');
+                                  if (cur !== null && /^[0-9a-f]{32,40}$/.test(String(cur))) {
+                                    M.put('deviceid', TR6);
+                                    send({ ev: 'y6b_fix', was: String(cur) });
+                                  }
+                                } catch (q) {}
+                                return ov.call(this, m);
+                              };
+                            });
+                            send({ ev: 'y6b_hooked' });
+                          }
+                        } catch (e1) {}
+                        try {
+                          const D7 = F.use('d7.c');
+                          D7.a.overloads.forEach(function (ov) {
+                            ov.implementation = function (code, body) {
+                              try {
+                                const b = body === null ? '' : String(body);
+                                send({ ev: 'd7resp', code: code, body: b.length > 160 ? b.slice(0, 160) : b });
+                              } catch (q2) {}
+                              return ov.call(this, code, body);
+                            };
+                          });
+                          send({ ev: 'd7_hooked' });
+                        } catch (e2) {}
+                      } catch (e) {}
+                    },
+                    onComplete: function () { send({ ev: 'y6_done' }); }
+                  });
+                } catch (eY2) { send({ ev: 'y6_err', e: String(eY2) }); }
 
 
                 try {
