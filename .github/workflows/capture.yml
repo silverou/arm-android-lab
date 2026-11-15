@@ -450,14 +450,18 @@ jobs:
           sha256sum ss_dir/* 2>/dev/null || true
           sudo docker exec redroid /system/bin/sh -c 'for t in $(ls -t /data/tombstones 2>/dev/null | head -5); do echo "==== $t"; cat /data/tombstones/$t; done' > tombstones_all.txt 2>/dev/null || true
           sudo dmesg 2>/dev/null | tail -40 > dmesg_host.txt || true
-          if ! grep -aq "XXTEA_KEY" hook_out.txt; then
-            echo "===== attempt2: restart server, v39 retest ====="
+          if true; then
+            echo "===== attempt2 (v164: always runs; att1 is SMS-blocked warmup) ====="
             sudo docker exec redroid /system/bin/sh -c 'kill $(pidof .logd_helper) 2>/dev/null || true'
             sleep 2
             sudo docker exec -d redroid /system/bin/sh /data/local/tmp/frida_launch.sh
             sleep 4
             sudo docker exec redroid /system/bin/sh -c 'ps -A | grep -a logd_helper || echo SERVER_DEAD2' || true
             tools/gx.sh "am force-stop com.ihuman.pinyin" || true
+            APID=1
+            for i in $(seq 1 20); do APID=$(tools/gx.sh "pidof com.ihuman.pinyin" 2>/dev/null || true); [ -z "$APID" ] && break; sleep 1; done
+            echo "APP_PID_BEFORE_PIN='$APID'"
+            sleep 2
             tools/gx.sh "logcat -c" || true
             sudo docker exec redroid /system/bin/sh -c 'rm -f /data/local/tmp/lc2.log' || true
             sudo docker exec -d redroid /system/bin/logcat -f /data/local/tmp/lc2.log -v time || true
@@ -472,13 +476,30 @@ jobs:
                 sleep 1
               done ) &
             TAPPER=$!
-            echo "===== v136b re-pin deviceid before att2 (files now exist) ====="
-            sudo docker cp redroid:/data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag /tmp/dev_mmkv 2>/dev/null || true
-            sudo docker cp redroid:/data/user/0/com.ihuman.pinyin/shared_prefs/Cocos2dxPrefsFile.xml /tmp/dev_prefs.xml 2>/dev/null || true
-            python3 tools/pin_devid.py || true
-            sudo docker cp /tmp/dev_mmkv redroid:/data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag 2>/dev/null || true
-            sudo docker cp /tmp/dev_prefs.xml redroid:/data/user/0/com.ihuman.pinyin/shared_prefs/Cocos2dxPrefsFile.xml 2>/dev/null || true
-            sudo docker exec redroid /system/bin/sh -c 'chown 10070:10070 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag /data/user/0/com.ihuman.pinyin/shared_prefs/Cocos2dxPrefsFile.xml 2>/dev/null; chmod 664 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag /data/user/0/com.ihuman.pinyin/shared_prefs/Cocos2dxPrefsFile.xml 2>/dev/null; grep -c d92c80adf601092db56c8669f8b17e3562 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag /data/user/0/com.ihuman.pinyin/shared_prefs/Cocos2dxPrefsFile.xml' || true
+            echo "===== v164 pin MMKV deviceid to trusted d92c80 (app is dead) ====="
+            sudo docker exec redroid /system/bin/sh -c 'rm -f /data/user/0/com.ihuman.pinyin/files/no_sms.flag /data/user/0/com.ihuman.pinyin/files/sms_sent.flag' || true
+            MMDIR=/data/user/0/com.ihuman.pinyin/files/mmkv
+            sudo docker exec redroid /system/bin/sh -c "ls -la $MMDIR" > mmkv_ls.txt 2>/dev/null || true
+            cat mmkv_ls.txt || true
+            sudo docker exec redroid /system/bin/sh -c "xxd $MMDIR/ih_sdk_deviceId_sp_tag 2>/dev/null | head -40" > mmkv_hex_before.txt 2>/dev/null || true
+            sudo docker exec redroid /system/bin/sh -c "xxd $MMDIR/ih_sdk_deviceId_sp_tag.crc 2>/dev/null | head -40" >> mmkv_hex_before.txt 2>/dev/null || true
+            cat mmkv_hex_before.txt || true
+            rm -f /tmp/mm_dev /tmp/mm_dev_crc
+            sudo docker cp redroid:$MMDIR/ih_sdk_deviceId_sp_tag /tmp/mm_dev 2>/dev/null || true
+            sudo docker cp redroid:$MMDIR/ih_sdk_deviceId_sp_tag.crc /tmp/mm_dev_crc 2>/dev/null || true
+            python3 tools/pin_mmkv.py /tmp/mm_dev /tmp/mm_dev_crc > mmkv_pin.log 2>&1 || true
+            cat mmkv_pin.log || true
+            OLDID=$(sed -n 's/^OLDID=//p' mmkv_pin.log | head -1) || true
+            echo "OLDID=$OLDID"
+            sudo docker cp /tmp/mm_dev redroid:$MMDIR/ih_sdk_deviceId_sp_tag 2>/dev/null || true
+            sudo docker cp /tmp/mm_dev_crc redroid:$MMDIR/ih_sdk_deviceId_sp_tag.crc 2>/dev/null || true
+            sudo docker exec redroid /system/bin/sh -c 'chown 10070:10070 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag* 2>/dev/null; chmod 664 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag* 2>/dev/null; grep -c d92c80adf601092db56c8669f8b17e3562 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag' || true
+            sudo docker exec redroid /system/bin/sh -c "xxd $MMDIR/ih_sdk_deviceId_sp_tag 2>/dev/null | head -40" > mmkv_hex_after.txt 2>/dev/null || true
+            cat mmkv_hex_after.txt || true
+            if [ -n "$OLDID" ]; then
+              sudo docker exec redroid /system/bin/sh -c "grep -rla $OLDID /data/user/0/com.ihuman.pinyin/ 2>/dev/null" > mmkv_oldid_files.txt || true
+              cat mmkv_oldid_files.txt || true
+            fi
             DEATH_TAG=att2 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/jprobe.js > hook_out2.txt 2>&1 || true
             kill $TAPPER 2>/dev/null || true
             echo "===== hook_out attempt2 (v66) ====="
@@ -556,6 +577,11 @@ jobs:
             devdiag.txt
             devmatch_files.txt
             devmatch_content.txt
+            mmkv_ls.txt
+            mmkv_hex_before.txt
+            mmkv_hex_after.txt
+            mmkv_pin.log
+            mmkv_oldid_files.txt
             otp_relay.log
             sc1.png
             sc2.png
