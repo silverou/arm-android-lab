@@ -14658,6 +14658,48 @@ std_string_c_str (StdString * self)
                   });
                   send({ ev: 'sbstr_hooked', n: hn3 });
                 } catch (eS) { send({ ev: 'sbstr_err', e: String(eS) }); }
+                try {
+                  const TR4 = 'd92c80adf601092db56c8669f8b17e3562';
+                  JX.enumerateClassLoaders({
+                    onMatch: function (loader) {
+                      try {
+                        const F = JX.ClassFactory.get(loader);
+                        const G = F.use('g0');
+                        const ms = G.class.getDeclaredMethods();
+                        const sig = [];
+                        for (let i = 0; i < ms.length; i++) {
+                          const pt = ms[i].getParameterTypes();
+                          const ps = [];
+                          for (let j = 0; j < pt.length; j++) ps.push(String(pt[j].getName()).split('.').pop());
+                          sig.push(ms[i].getName() + '(' + ps.join(',') + ')');
+                        }
+                        send({ ev: 'g0_methods', n: sig });
+                        for (let i = 0; i < ms.length; i++) {
+                          const mm = ms[i];
+                          const pt = mm.getParameterTypes();
+                          if (pt.length !== 2) continue;
+                          if (String(pt[0].getName()) !== 'java.lang.String') continue;
+                          const name = mm.getName();
+                          try {
+                            G[name].overloads.forEach(function (ov) {
+                              ov.implementation = function (k, v) {
+                                try {
+                                  if (k === 'deviceid' && typeof v === 'string' && /^[0-9a-f]{32,40}$/.test(v)) {
+                                    send({ ev: 'g0_dev', m: name, was: v });
+                                    return ov.call(this, k, TR4);
+                                  }
+                                } catch (q) {}
+                                return ov.call(this, k, v);
+                              };
+                            });
+                          } catch (q2) {}
+                        }
+                        send({ ev: 'g0_hooked' });
+                      } catch (e) {}
+                    },
+                    onComplete: function () { send({ ev: 'g0_done' }); }
+                  });
+                } catch (eT2) { send({ ev: 'g0_err', e: String(eT2) }); }
 
 
                 try {
