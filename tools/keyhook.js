@@ -314,7 +314,7 @@ var LUA_CODE = [
   'end)',
   'local okd, dv = pcall(function() return IHM:getDeviceId() end)',
   'append("v120_dump.txt", "DEVID patched="..tostring(devPatched).." get="..tostring(okd)..":"..tostring(dv))',
-  'local PHONE = "13662416252"',
+  'local PHONE = "00000000000"',
   'local tick = 0',
   'local smsDone = exists("sms_sent.flag") or exists("no_sms.flag")',
   'local bogusDone = false',
