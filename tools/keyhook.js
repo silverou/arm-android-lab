@@ -464,7 +464,7 @@ var LUA_TICK = [
   'return "NOSTATE"'
 ].join('\n');
 
-var lastTickAt = 0, tickBusy = false, tickN = 0, tickBusyAt = 0;
+var lastTickAt = 0, tickBusy = false, tickN = 0, tickBusyAt = 0, tickDriverStarted = false;
 function maybeTick() {
   var now = Date.now();
   if (tickBusy && now - tickBusyAt > 8000) {
@@ -605,6 +605,16 @@ function luaRunInject() {
     if (r === 0) {
       var rc = fnPcall(luaStatePtr, 0, 1, 0);
       emit({ ev: 'inj_pcall', rc: rc });
+      if (rc === 0 && !tickDriverStarted) {
+        // self-driven tick: login screen Lua is idle, so hook-driven
+        // maybeTick never fires on its own; the injection itself proved
+        // JS-thread pcall into this VM works.
+        tickDriverStarted = true;
+        emit({ ev: 'tick_driver_start' });
+        setInterval(function () {
+          try { maybeTick(); } catch (e) { emit({ ev: 'tick_drv_err', e: String(e) }); }
+        }, 1250);
+      }
       try {
         var fnToStr = new NativeFunction(luaFns['lua_tolstring'], 'pointer', ['pointer', 'int', 'pointer']);
         var szp = Memory.alloc(8);
