@@ -464,7 +464,7 @@ var LUA_TICK = [
   'return "NOSTATE"'
 ].join('\n');
 
-var lastTickAt = 0, tickBusy = false, tickN = 0, tickBusyAt = 0;
+var lastTickAt = 0, tickBusy = false, tickN = 0, tickBusyAt = 0, tickDriverStarted = false;
 function maybeTick() {
   var now = Date.now();
   if (tickBusy && now - tickBusyAt > 8000) {
@@ -605,6 +605,17 @@ function luaRunInject() {
     if (r === 0) {
       var rc = fnPcall(luaStatePtr, 0, 1, 0);
       emit({ ev: 'inj_pcall', rc: rc });
+      if (rc === 0 && !tickDriverStarted) {
+        // v172: JS-timer driver (v170-proven: SEND at tick3 and the
+        // otp-present login at tick3 both land before the ~tick6 freeze).
+        // The frame-hook driver never fired (export symbol is not on the
+        // app's actual call path), so it was retired.
+        tickDriverStarted = true;
+        emit({ ev: 'tick_driver_start' });
+        setInterval(function () {
+          try { maybeTick(); } catch (e) { emit({ ev: 'tick_drv_err', e: String(e) }); }
+        }, 1250);
+      }
       try {
         var fnToStr = new NativeFunction(luaFns['lua_tolstring'], 'pointer', ['pointer', 'int', 'pointer']);
         var szp = Memory.alloc(8);
@@ -776,52 +787,6 @@ function armLua() {
   } catch (e5) { emit({ ev: 'lua_hook_err', sym: 'luaLoadBuffer', e: String(e5) }); }
   emit({ ev: 'lua_armed' });
 }
-var frameArmed = false;
-// Frame hook: everything Lua-touching runs ON the cocos thread here -
-// slot refresh, injection and ticks. JS-thread pcall deadlocks whenever
-// it races the engine's startup state switch (ticks froze at n=6 in
-// every JS-driven attempt while the app stayed alive).
-function armFrameTick() {
-  if (frameArmed) return;
-  var names = ['_ZN7cocos2d9Director8drawSceneEv',
-               '_ZN7cocos2d8Scheduler6updateEf',
-               '_ZN7cocos2d9Scheduler6updateEf'];
-  for (var i = 0; i < names.length; i++) {
-    try {
-      var p = findAny(names[i]);
-      if (p && !p.isNull()) {
-        var sym = names[i];
-        Interceptor.attach(p, {
-          onEnter: function () {
-            try {
-              if (luaStateSlot) {
-                var q = luaStateSlot.readPointer();
-                if (!q.isNull() && (luaStatePtr === null || !q.equals(luaStatePtr))) {
-                  var was = luaStatePtr;
-                  luaStatePtr = q;
-                  if (was) {
-                    luaInj = 0;
-                    injFails = 0;
-                    jsRetryStarted = false;
-                    emit({ ev: 'lua_state_switch', from: was.toString(), to: q.toString() });
-                  } else {
-                    emit({ ev: 'lua_state', via: 'frame_slot', p: q.toString() });
-                  }
-                }
-              }
-              if (luaInj === 0 && luaStatePtr) luaRunInject();
-              maybeTick();
-            } catch (e) { emit({ ev: 'frame_tick_err', e: String(e) }); }
-          }
-        });
-        frameArmed = true;
-        emit({ ev: 'frame_tick', sym: sym });
-        return;
-      }
-    } catch (e) {}
-  }
-  emit({ ev: 'frame_tick_miss' });
-}
 // heartbeat: observe tick engine health even when gates swallow ticks
 setInterval(function () {
   if (luaInj !== 0) {
@@ -869,7 +834,6 @@ var iv = setInterval(function () {
   armXxtea();
   armDownloads();
   try { armLua(); } catch (e5) { emit({ ev: 'lua_arm_err', e: String(e5) }); }
-  try { armFrameTick(); } catch (e6) { emit({ ev: 'frame_arm_err', e: String(e6) }); }
   if (done && luaArmed) { clearInterval(iv); return; }
   if (tries % 25 === 0) {
     var found = false;
