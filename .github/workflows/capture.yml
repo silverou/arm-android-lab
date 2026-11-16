@@ -341,48 +341,7 @@ jobs:
           echo "using FRIDA_DEVICE=$FRIDA_DEVICE"
           sudo docker exec redroid /system/bin/sh -c 'rm -f /data/local/tmp/lc1.log' || true
           sudo docker exec -d redroid /system/bin/logcat -f /data/local/tmp/lc1.log -v time || true
-          echo "--- v78 tapper: startup taps, open lesson, close intro, tap level bubbles ---"
-          ( for i in $(seq 1 5); do
-              tools/gx.sh "input tap 1108 402" >/dev/null 2>&1 || true
-              sleep 1
-              tools/gx.sh "input tap 592 576" >/dev/null 2>&1 || true
-              sleep 1
-              tools/gx.sh "input tap 1188 76" >/dev/null 2>&1 || true
-              sleep 2
-            done
-            sleep 55
-            echo "TAP lesson tile 1" >&2
-            tools/gx.sh "input tap 320 310" >/dev/null 2>&1 || true
-            sleep 8
-            echo "TAP close intro" >&2
-            tools/gx.sh "input tap 1112 113" >/dev/null 2>&1 || true
-            sleep 6
-            echo "TAP level bubble on pedestal" >&2
-            tools/gx.sh "input tap 300 467" >/dev/null 2>&1 || true
-            sleep 12
-            tools/gx.sh "screencap -p /data/local/tmp/t1.png" >/dev/null 2>&1 || true
-            sudo docker exec redroid /system/bin/cat /data/local/tmp/t1.png > t1.png 2>/dev/null || true
-            echo "TAP level bubble low-left" >&2
-            tools/gx.sh "input tap 163 580" >/dev/null 2>&1 || true
-            sleep 12
-            tools/gx.sh "screencap -p /data/local/tmp/t2.png" >/dev/null 2>&1 || true
-            sudo docker exec redroid /system/bin/cat /data/local/tmp/t2.png > t2.png 2>/dev/null || true
-            echo "TAP level bubble mid-left" >&2
-            tools/gx.sh "input tap 210 578" >/dev/null 2>&1 || true
-            sleep 12
-            tools/gx.sh "screencap -p /data/local/tmp/t3.png" >/dev/null 2>&1 || true
-            sudo docker exec redroid /system/bin/cat /data/local/tmp/t3.png > t3.png 2>/dev/null || true
-            echo "TAP next page arrow" >&2
-            tools/gx.sh "input tap 1218 668" >/dev/null 2>&1 || true
-            sleep 10
-            tools/gx.sh "input tap 320 310" >/dev/null 2>&1 || true
-            sleep 10
-            tools/gx.sh "input tap 1112 113" >/dev/null 2>&1 || true
-            sleep 8
-            tools/gx.sh "input tap 640 400" >/dev/null 2>&1 || true
-            sleep 20
-          ) &
-          TAPPER=$!
+          echo "--- v168: tapper removed (input taps caused ANR kills) ---"
           echo "--- host tcpdump during attempt1 (dns+sni) ---"
           sudo tcpdump -i any -nn -l 'udp port 53 or tcp port 443' > tcp1.txt 2>/dev/null &
           TCPD=$!
@@ -475,17 +434,6 @@ jobs:
             tools/gx.sh "logcat -c" || true
             sudo docker exec redroid /system/bin/sh -c 'rm -f /data/local/tmp/lc2.log' || true
             sudo docker exec -d redroid /system/bin/logcat -f /data/local/tmp/lc2.log -v time || true
-            ( for i in $(seq 1 70); do
-                tools/gx.sh "input tap 1108 402" >/dev/null 2>&1 || true
-                sleep 1
-                tools/gx.sh "input tap 592 576" >/dev/null 2>&1 || true
-                sleep 1
-                tools/gx.sh "input tap 1188 76" >/dev/null 2>&1 || true
-                sleep 1
-                tools/gx.sh "input tap 640 640" >/dev/null 2>&1 || true
-                sleep 1
-              done ) &
-            TAPPER=$!
             echo "===== v164 pin MMKV deviceid to trusted d92c80 (app is dead) ====="
             sudo docker exec redroid /system/bin/sh -c 'rm -f /data/user/0/com.ihuman.pinyin/files/no_sms.flag /data/user/0/com.ihuman.pinyin/files/sms_sent.flag' || true
             MMDIR=/data/user/0/com.ihuman.pinyin/files/mmkv
@@ -516,7 +464,6 @@ jobs:
               cat mmkv_oldid_files.txt || true
             fi
             DEATH_TAG=att2 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/jprobe.js > hook_out2.txt 2>&1 || true
-            kill $TAPPER 2>/dev/null || true
             echo "===== hook_out attempt2 (v66) ====="
             tail -40 hook_out2.txt || true
             cat hook_out2.txt >> hook_out.txt || true
@@ -531,22 +478,30 @@ jobs:
             sudo dmesg 2>/dev/null | tail -40 > dmesg_host2.txt || true
           fi
           sudo docker exec redroid /system/bin/cat /data/user/0/com.ihuman.pinyin/files/v120_dump.txt > /tmp/v120_mid.txt 2>/dev/null || true
-          if ! grep -aq '"ev": "tick"' hook_out2.txt || ! grep -aq 'LOGIN_START' /tmp/v120_mid.txt; then
-            echo "===== attempt3 (v165): att2 lua tick dead, retry ====="
-            tools/gx.sh "am force-stop com.ihuman.pinyin" || true
-            APID3=1
-            for i in $(seq 1 20); do APID3=$(tools/gx.sh "pidof com.ihuman.pinyin" 2>/dev/null || true); [ -z "$APID3" ] && break; sleep 1; done
-            echo "APP_PID_BEFORE_ATT3='$APID3'"
-            sleep 2
-            sudo docker exec redroid /system/bin/sh -c 'rm -f /data/user/0/com.ihuman.pinyin/files/no_sms.flag /data/user/0/com.ihuman.pinyin/files/sms_sent.flag' || true
-            sudo docker exec redroid /system/bin/cat $MMDIR/ih_sdk_deviceId_sp_tag > /tmp/mm_dev 2>/dev/null || true
-            sudo docker exec redroid /system/bin/cat $MMDIR/ih_sdk_deviceId_sp_tag.crc > /tmp/mm_dev_crc 2>/dev/null || true
-            python3 tools/pin_mmkv.py /tmp/mm_dev /tmp/mm_dev_crc >> mmkv_pin.log 2>&1 || true
-            if [ -s /tmp/mm_dev ]; then sudo docker exec -i redroid /system/bin/sh -c "cat > $MMDIR/ih_sdk_deviceId_sp_tag" < /tmp/mm_dev; fi
-            if [ -s /tmp/mm_dev_crc ]; then sudo docker exec -i redroid /system/bin/sh -c "cat > $MMDIR/ih_sdk_deviceId_sp_tag.crc" < /tmp/mm_dev_crc; fi
-            sudo docker exec redroid /system/bin/sh -c 'chown 10070:10070 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag* 2>/dev/null; chmod 664 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag* 2>/dev/null' || true
-            DEATH_TAG=att3 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/jprobe.js > hook_out3.txt 2>&1 || true
-            cat hook_out3.txt >> hook_out.txt || true
+          if ! grep -aq 'LOGIN_START' /tmp/v120_mid.txt; then
+            echo "===== v168 login phase: wait for OTP in guest, then dedicated login attempts (no SMS resend) ====="
+            sudo docker exec redroid /system/bin/sh -c 'rm -f /data/user/0/com.ihuman.pinyin/files/no_sms.flag' || true
+            for LA in 1 2 3; do
+              echo "----- login attempt $LA -----"
+              GOT=0
+              WAITN=6
+              if [ "$LA" = "1" ]; then WAITN=75; fi
+              for w in $(seq 1 $WAITN); do
+                OTPV=$(sudo docker exec redroid /system/bin/cat /data/user/0/com.ihuman.pinyin/files/otp.txt 2>/dev/null | tr -d '[:space:]')
+                if echo "$OTPV" | grep -qE '^[0-9]{4,8}$'; then GOT=1; echo "otp present at wait $w"; break; fi
+                sleep 4
+              done
+              if [ "$GOT" != "1" ]; then echo "no otp after wait (attempt $LA)"; fi
+              tools/gx.sh "am force-stop com.ihuman.pinyin" || true
+              APID3=1
+              for i in $(seq 1 20); do APID3=$(tools/gx.sh "pidof com.ihuman.pinyin" 2>/dev/null || true); [ -z "$APID3" ] && break; sleep 1; done
+              echo "APP_PID_LA$LA='$APID3'"
+              sleep 2
+              DEATH_TAG=la$LA BUNDLE_SET=v66 timeout 200 python3 tools/run_capture.py 150 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/jprobe.js > hook_outla$LA.txt 2>&1 || true
+              cat hook_outla$LA.txt >> hook_out.txt || true
+              sudo docker exec redroid /system/bin/cat /data/user/0/com.ihuman.pinyin/files/v120_dump.txt > v120_dump.txt 2>/dev/null || true
+              if grep -aq 'LOGIN_START' v120_dump.txt; then echo "LOGIN_START at attempt $LA"; break; fi
+            done
             tools/gx.sh "logcat -d -v time" > logcat_att3.txt 2>/dev/null || true
             sudo docker exec redroid /system/bin/cat /data/user/0/com.ihuman.pinyin/files/v120_dump.txt > v120_dump3.txt 2>/dev/null || true
           fi
@@ -617,6 +572,7 @@ jobs:
             mmkv_hex_after.txt
             mmkv_pin.log
             mmkv_oldid_files.txt
+            hook_outla*.txt
             hook_out3.txt
             logcat_att3.txt
             v120_dump3.txt
