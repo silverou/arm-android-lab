@@ -413,7 +413,7 @@ jobs:
             echo "nosms present -> blocking SMS"
             sudo docker exec redroid /system/bin/sh -c 'echo 1 > /data/user/0/com.ihuman.pinyin/files/no_sms.flag'
           fi
-          DEATH_TAG=att1 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/jprobe.js > hook_out.txt 2>&1 || true
+          DEATH_TAG=att1 BUNDLE_SET=v66 timeout 160 python3 tools/run_capture.py 100 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/jprobe.js > hook_out.txt 2>&1 || true
           kill $TAPPER $SEQP 2>/dev/null || true
           kill $TCPD 2>/dev/null || true
           echo "--- mitm flows dump ---"
@@ -485,14 +485,19 @@ jobs:
             sudo docker exec redroid /system/bin/sh -c "xxd $MMDIR/ih_sdk_deviceId_sp_tag.crc 2>/dev/null | head -40" >> mmkv_hex_before.txt 2>/dev/null || true
             cat mmkv_hex_before.txt || true
             rm -f /tmp/mm_dev /tmp/mm_dev_crc
-            sudo docker cp redroid:$MMDIR/ih_sdk_deviceId_sp_tag /tmp/mm_dev 2>/dev/null || true
-            sudo docker cp redroid:$MMDIR/ih_sdk_deviceId_sp_tag.crc /tmp/mm_dev_crc 2>/dev/null || true
+            sudo docker exec redroid /system/bin/cat $MMDIR/ih_sdk_deviceId_sp_tag > /tmp/mm_dev 2>/dev/null || true
+            sudo docker exec redroid /system/bin/cat $MMDIR/ih_sdk_deviceId_sp_tag.crc > /tmp/mm_dev_crc 2>/dev/null || true
+            ls -la /tmp/mm_dev /tmp/mm_dev_crc || true
             python3 tools/pin_mmkv.py /tmp/mm_dev /tmp/mm_dev_crc > mmkv_pin.log 2>&1 || true
             cat mmkv_pin.log || true
             OLDID=$(sed -n 's/^OLDID=//p' mmkv_pin.log | head -1) || true
             echo "OLDID=$OLDID"
-            sudo docker cp /tmp/mm_dev redroid:$MMDIR/ih_sdk_deviceId_sp_tag 2>/dev/null || true
-            sudo docker cp /tmp/mm_dev_crc redroid:$MMDIR/ih_sdk_deviceId_sp_tag.crc 2>/dev/null || true
+            if [ -s /tmp/mm_dev ]; then
+              sudo docker exec -i redroid /system/bin/sh -c "cat > $MMDIR/ih_sdk_deviceId_sp_tag" < /tmp/mm_dev
+            fi
+            if [ -s /tmp/mm_dev_crc ]; then
+              sudo docker exec -i redroid /system/bin/sh -c "cat > $MMDIR/ih_sdk_deviceId_sp_tag.crc" < /tmp/mm_dev_crc
+            fi
             sudo docker exec redroid /system/bin/sh -c 'chown 10070:10070 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag* 2>/dev/null; chmod 664 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag* 2>/dev/null; grep -c d92c80adf601092db56c8669f8b17e3562 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag' || true
             sudo docker exec redroid /system/bin/sh -c "xxd $MMDIR/ih_sdk_deviceId_sp_tag 2>/dev/null | head -40" > mmkv_hex_after.txt 2>/dev/null || true
             cat mmkv_hex_after.txt || true
@@ -515,6 +520,26 @@ jobs:
             tools/gx.sh "logcat -d -v time" > logcat_att2.txt 2>/dev/null || true
             sudo dmesg 2>/dev/null | tail -40 > dmesg_host2.txt || true
           fi
+          sudo docker exec redroid /system/bin/cat /data/user/0/com.ihuman.pinyin/files/v120_dump.txt > /tmp/v120_mid.txt 2>/dev/null || true
+          if ! grep -aq '"ev": "tick"' hook_out2.txt || ! grep -aq 'LOGIN_START' /tmp/v120_mid.txt; then
+            echo "===== attempt3 (v165): att2 lua tick dead, retry ====="
+            tools/gx.sh "am force-stop com.ihuman.pinyin" || true
+            APID3=1
+            for i in $(seq 1 20); do APID3=$(tools/gx.sh "pidof com.ihuman.pinyin" 2>/dev/null || true); [ -z "$APID3" ] && break; sleep 1; done
+            echo "APP_PID_BEFORE_ATT3='$APID3'"
+            sleep 2
+            sudo docker exec redroid /system/bin/sh -c 'rm -f /data/user/0/com.ihuman.pinyin/files/no_sms.flag /data/user/0/com.ihuman.pinyin/files/sms_sent.flag' || true
+            sudo docker exec redroid /system/bin/cat $MMDIR/ih_sdk_deviceId_sp_tag > /tmp/mm_dev 2>/dev/null || true
+            sudo docker exec redroid /system/bin/cat $MMDIR/ih_sdk_deviceId_sp_tag.crc > /tmp/mm_dev_crc 2>/dev/null || true
+            python3 tools/pin_mmkv.py /tmp/mm_dev /tmp/mm_dev_crc >> mmkv_pin.log 2>&1 || true
+            if [ -s /tmp/mm_dev ]; then sudo docker exec -i redroid /system/bin/sh -c "cat > $MMDIR/ih_sdk_deviceId_sp_tag" < /tmp/mm_dev; fi
+            if [ -s /tmp/mm_dev_crc ]; then sudo docker exec -i redroid /system/bin/sh -c "cat > $MMDIR/ih_sdk_deviceId_sp_tag.crc" < /tmp/mm_dev_crc; fi
+            sudo docker exec redroid /system/bin/sh -c 'chown 10070:10070 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag* 2>/dev/null; chmod 664 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag* 2>/dev/null' || true
+            DEATH_TAG=att3 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/jprobe.js > hook_out3.txt 2>&1 || true
+            cat hook_out3.txt >> hook_out.txt || true
+            tools/gx.sh "logcat -d -v time" > logcat_att3.txt 2>/dev/null || true
+            sudo docker exec redroid /system/bin/cat /data/user/0/com.ihuman.pinyin/files/v120_dump.txt > v120_dump3.txt 2>/dev/null || true
+          fi
           echo "--- final mitm dump (post attempt2) ---"
           cp flows.txt flows1.txt 2>/dev/null || true
           python3 tools/flows_dump.py || true
@@ -525,7 +550,7 @@ jobs:
           sudo docker exec redroid /system/bin/cat /data/user/0/com.ihuman.pinyin/files/v120_dump.txt > v120_dump.txt 2>/dev/null || true
           wc -c v120_dump.txt 2>/dev/null || true
           echo "===== deviceid storage reverse lookup ====="
-          DEV=$(grep -aoE 'deviceid=[a-f0-9]{32}' flows.txt 2>/dev/null | head -1 | cut -d= -f2 || true)
+          DEV=$(grep -aoE 'deviceid=[a-f0-9]{32,40}' flows.txt 2>/dev/null | head -1 | cut -d= -f2 || true)
           echo "FLOWS_DEVICEID=$DEV"
           if [ -n "$DEV" ]; then
             sudo docker exec redroid /system/bin/sh -c "grep -rla $DEV /data/user/0/com.ihuman.pinyin/ 2>/dev/null" > devmatch_files.txt || true
@@ -582,6 +607,9 @@ jobs:
             mmkv_hex_after.txt
             mmkv_pin.log
             mmkv_oldid_files.txt
+            hook_out3.txt
+            logcat_att3.txt
+            v120_dump3.txt
             otp_relay.log
             sc1.png
             sc2.png
