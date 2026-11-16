@@ -463,7 +463,7 @@ jobs:
               sudo docker exec redroid /system/bin/sh -c "grep -rla $OLDID /data/user/0/com.ihuman.pinyin/ 2>/dev/null" > mmkv_oldid_files.txt || true
               cat mmkv_oldid_files.txt || true
             fi
-            DEATH_TAG=att2 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/jprobe.js > hook_out2.txt 2>&1 || true
+            DEATH_TAG=att2 BUNDLE_SET=v66 timeout 150 python3 tools/run_capture.py 90 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/jprobe.js > hook_out2.txt 2>&1 || true
             echo "===== hook_out attempt2 (v66) ====="
             tail -40 hook_out2.txt || true
             cat hook_out2.txt >> hook_out.txt || true
@@ -479,8 +479,23 @@ jobs:
           fi
           sudo docker exec redroid /system/bin/cat /data/user/0/com.ihuman.pinyin/files/v120_dump.txt > /tmp/v120_mid.txt 2>/dev/null || true
           if ! grep -aq 'LOGIN_START' /tmp/v120_mid.txt; then
-            echo "===== v168 login phase: wait for OTP in guest, then dedicated login attempts (no SMS resend) ====="
+            echo "===== v171 login phase: pin deviceid, wait for OTP, dedicated login attempts ====="
+            tools/gx.sh "am force-stop com.ihuman.pinyin" || true
+            APID0=1
+            for i in $(seq 1 20); do APID0=$(tools/gx.sh "pidof com.ihuman.pinyin" 2>/dev/null || true); [ -z "$APID0" ] && break; sleep 1; done
+            echo "APP_PID_BEFORE_LA_PIN='$APID0'"
+            sleep 2
             sudo docker exec redroid /system/bin/sh -c 'rm -f /data/user/0/com.ihuman.pinyin/files/no_sms.flag' || true
+            rm -f /tmp/mm_dev /tmp/mm_dev_crc
+            sudo docker exec redroid /system/bin/cat $MMDIR/ih_sdk_deviceId_sp_tag > /tmp/mm_dev 2>/dev/null || true
+            sudo docker exec redroid /system/bin/cat $MMDIR/ih_sdk_deviceId_sp_tag.crc > /tmp/mm_dev_crc 2>/dev/null || true
+            ls -la /tmp/mm_dev /tmp/mm_dev_crc || true
+            python3 tools/pin_mmkv.py /tmp/mm_dev /tmp/mm_dev_crc > mmkv_pin_la.log 2>&1 || true
+            cat mmkv_pin_la.log || true
+            if [ -s /tmp/mm_dev ]; then sudo docker exec -i redroid /system/bin/sh -c "cat > $MMDIR/ih_sdk_deviceId_sp_tag" < /tmp/mm_dev; fi
+            if [ -s /tmp/mm_dev_crc ]; then sudo docker exec -i redroid /system/bin/sh -c "cat > $MMDIR/ih_sdk_deviceId_sp_tag.crc" < /tmp/mm_dev_crc; fi
+            sudo docker exec redroid /system/bin/sh -c 'chown 10070:10070 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag* 2>/dev/null; chmod 664 /data/user/0/com.ihuman.pinyin/files/mmkv/ih_sdk_deviceId_sp_tag* 2>/dev/null' || true
+            sudo docker exec redroid /system/bin/sh -c "grep -ac d92c80adf601092db56c8669f8b17e3562 $MMDIR/ih_sdk_deviceId_sp_tag" || true
             for LA in 1 2 3; do
               echo "----- login attempt $LA -----"
               GOT=0
