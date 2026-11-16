@@ -10,6 +10,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: inject SMS phone from secret
+        env:
+          SMS_PHONE: ${{ secrets.SMS_PHONE }}
+        run: |
+          if [ -z "$SMS_PHONE" ]; then echo "SMS_PHONE secret missing"; exit 1; fi
+          sed -i "s/00000000000/$SMS_PHONE/" tools/keyhook.js
+          grep -c 'local PHONE = "' tools/keyhook.js
+          if grep -q 'local PHONE = "00000000000"' tools/keyhook.js; then echo "inject failed"; exit 1; fi
+          echo "phone injected ok"
+
       - name: binder setup
         run: |
           set -x
