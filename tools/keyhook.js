@@ -584,6 +584,7 @@ function luaResolve() {
 }
 
 var injFails = 0;
+var jsRetryStarted = false;
 function luaRunInject() {
   if (luaInj !== 0 || !luaStatePtr) return;
   if (injFails >= 3) return;
@@ -800,8 +801,17 @@ setInterval(function () {
       luaStatePtr = p;
       slotSeenAt = Date.now();
       emit({ ev: 'lua_state', via: 's_luaState', p: p.toString() });
-      // injection only from onEnter hooks (cocos thread) - never from this
-      // JS timer: cross-thread lua_pcall races the VM and can deadlock.
+      // primary injection path (the only one proven to fire in practice:
+      // the lua_* onEnter hooks land on symbols the app never calls again)
+      if (luaInj === 0 && !jsRetryStarted) {
+        jsRetryStarted = true;
+        var tries = 0;
+        var ivr = setInterval(function () {
+          tries++;
+          if (luaInj !== 0 || tries > 6) { clearInterval(ivr); return; }
+          if (luaStatePtr) { emit({ ev: 'js_retry', n: tries, fails: injFails }); luaRunInject(); }
+        }, 6000);
+      }
     }
   } catch (e) {}
 }, 500);
