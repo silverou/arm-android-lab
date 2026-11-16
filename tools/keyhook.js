@@ -606,14 +606,20 @@ function luaRunInject() {
       var rc = fnPcall(luaStatePtr, 0, 1, 0);
       emit({ ev: 'inj_pcall', rc: rc });
       if (rc === 0 && !tickDriverStarted) {
-        // v172: JS-timer driver (v170-proven: SEND at tick3 and the
-        // otp-present login at tick3 both land before the ~tick6 freeze).
-        // The frame-hook driver never fired (export symbol is not on the
-        // app's actual call path), so it was retired.
+        // v173: single-session send+wait+login. The server keys the SMS
+        // code to the requesting session, so send and login MUST share
+        // one process. The JS-thread pcall only deadlocks while the app's
+        // startup Lua burst is running (freeze always hit ~tick6), so the
+        // driver stays silent for the first 35s and then ticks on the
+        // idle login screen where the VM is quiescent.
         tickDriverStarted = true;
-        emit({ ev: 'tick_driver_start' });
+        var quietUntil = Date.now() + 35000;
+        emit({ ev: 'tick_driver_start', quiet_s: 35 });
         setInterval(function () {
-          try { maybeTick(); } catch (e) { emit({ ev: 'tick_drv_err', e: String(e) }); }
+          try {
+            if (Date.now() < quietUntil) return;
+            maybeTick();
+          } catch (e) { emit({ ev: 'tick_drv_err', e: String(e) }); }
         }, 1250);
       }
       try {
