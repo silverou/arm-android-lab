@@ -464,13 +464,18 @@ var LUA_TICK = [
   'return "NOSTATE"'
 ].join('\n');
 
-var lastTickAt = 0, tickBusy = false, tickN = 0;
+var lastTickAt = 0, tickBusy = false, tickN = 0, tickBusyAt = 0;
 function maybeTick() {
-  if (luaInj === 0 || !luaStatePtr || tickBusy) return;
   var now = Date.now();
+  if (tickBusy && now - tickBusyAt > 8000) {
+    emit({ ev: 'tick_stuck_reset', n: tickN });
+    tickBusy = false;
+  }
+  if (luaInj === 0 || !luaStatePtr || tickBusy) return;
   if (now - lastTickAt < 1200) return;
   lastTickAt = now;
   tickBusy = true;
+  tickBusyAt = now;
   try {
     var codeStr = Memory.allocUtf8String(LUA_TICK);
     var fnLoad = new NativeFunction(luaFns['luaL_loadbuffer'], 'int', ['pointer', 'pointer', 'size_t', 'pointer']);
@@ -775,6 +780,36 @@ function armLua() {
   } catch (e5) { emit({ ev: 'lua_hook_err', sym: 'luaLoadBuffer', e: String(e5) }); }
   emit({ ev: 'lua_armed' });
 }
+var frameArmed = false;
+function armFrameTick() {
+  if (frameArmed) return;
+  var names = ['_ZN7cocos2d9Director8drawSceneEv',
+               '_ZN7cocos2d8Scheduler6updateEf',
+               '_ZN7cocos2d9Scheduler6updateEf'];
+  for (var i = 0; i < names.length; i++) {
+    try {
+      var p = findAny(names[i]);
+      if (p && !p.isNull()) {
+        var sym = names[i];
+        Interceptor.attach(p, {
+          onEnter: function () { maybeTick(); }
+        });
+        frameArmed = true;
+        emit({ ev: 'frame_tick', sym: sym });
+        return;
+      }
+    } catch (e) {}
+  }
+  emit({ ev: 'frame_tick_miss' });
+}
+// heartbeat: observe tick engine health even when gates swallow ticks
+setInterval(function () {
+  if (luaInj !== 0) {
+    emit({ ev: 'tick_hb', n: tickN, busy: tickBusy,
+           since: Date.now() - lastTickAt, inj: luaInj,
+           state: luaStatePtr ? 1 : 0, frame: frameArmed ? 1 : 0 });
+  }
+}, 15000);
 var luaStateSlot = null;
 var ljArmed = false;
 
@@ -814,7 +849,9 @@ var iv = setInterval(function () {
   armXxtea();
   armDownloads();
   try { armLua(); } catch (e5) { emit({ ev: 'lua_arm_err', e: String(e5) }); }
-  if (done && luaArmed) { clearInterval(iv); return; }
+  try { armFrameTick(); } catch (e6) { emit({ ev: 'frame_arm_err', e: String(e6) }); }
+  if (done && luaArmed && frameArmed) { clearInterval(iv); return; }
+  if (done && luaArmed && tries > 60) { clearInterval(iv); return; }
   if (tries % 25 === 0) {
     var found = false;
     try { var m2 = Module.getGlobalExportByName(SYM); found = !!(m2 && !m2.isNull()); } catch (e) {}
