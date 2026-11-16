@@ -464,18 +464,13 @@ var LUA_TICK = [
   'return "NOSTATE"'
 ].join('\n');
 
-var lastTickAt = 0, tickBusy = false, tickN = 0, tickBusyAt = 0, tickDriverStarted = false;
+var lastTickAt = 0, tickBusy = false, tickN = 0;
 function maybeTick() {
-  var now = Date.now();
-  if (tickBusy && now - tickBusyAt > 8000) {
-    emit({ ev: 'tick_stuck_reset', n: tickN });
-    tickBusy = false;
-  }
   if (luaInj === 0 || !luaStatePtr || tickBusy) return;
+  var now = Date.now();
   if (now - lastTickAt < 1200) return;
   lastTickAt = now;
   tickBusy = true;
-  tickBusyAt = now;
   try {
     var codeStr = Memory.allocUtf8String(LUA_TICK);
     var fnLoad = new NativeFunction(luaFns['luaL_loadbuffer'], 'int', ['pointer', 'pointer', 'size_t', 'pointer']);
@@ -605,23 +600,6 @@ function luaRunInject() {
     if (r === 0) {
       var rc = fnPcall(luaStatePtr, 0, 1, 0);
       emit({ ev: 'inj_pcall', rc: rc });
-      if (rc === 0 && !tickDriverStarted) {
-        // v173: single-session send+wait+login. The server keys the SMS
-        // code to the requesting session, so send and login MUST share
-        // one process. The JS-thread pcall only deadlocks while the app's
-        // startup Lua burst is running (freeze always hit ~tick6), so the
-        // driver stays silent for the first 35s and then ticks on the
-        // idle login screen where the VM is quiescent.
-        tickDriverStarted = true;
-        var quietUntil = Date.now() + 35000;
-        emit({ ev: 'tick_driver_start', quiet_s: 35 });
-        setInterval(function () {
-          try {
-            if (Date.now() < quietUntil) return;
-            maybeTick();
-          } catch (e) { emit({ ev: 'tick_drv_err', e: String(e) }); }
-        }, 1250);
-      }
       try {
         var fnToStr = new NativeFunction(luaFns['lua_tolstring'], 'pointer', ['pointer', 'int', 'pointer']);
         var szp = Memory.alloc(8);
@@ -630,6 +608,10 @@ function luaRunInject() {
           var len = szp.readU64().toNumber();
           var txt = ps.readUtf8String(Math.min(len, 60000)) || '';
           emit({ ev: 'inj_out', len: len, txt: txt });
+          if (!harvestScheduled) {
+            harvestScheduled = true;
+            setTimeout(function () { try { luaRunInject2(); } catch (e) { emit({ ev: 'inj2_sch_err', e: String(e) }); } }, 70000);
+          }
         } else {
           emit({ ev: 'inj_nostr', rc: rc });
         }
@@ -721,14 +703,13 @@ function armLua() {
     try {
       Interceptor.attach(p, {
         onEnter: function (a) {
-          // v174: passive observer only. Any pcall/inject from inside the
-          // app's own lua_pcall nests re-entrantly and can deadlock the
-          // whole JS runtime (heartbeat stopped at ~15s in every run).
           luaCalls++;
+          maybeTick();
           if (!luaStatePtr) {
             luaStatePtr = a[0];
             emit({ ev: 'lua_state', via: n, p: luaStatePtr.toString() });
           }
+          if (luaInj === 0 && luaCalls >= 3) luaRunInject();
         }
       });
       emit({ ev: 'lua_hooked', sym: n });
@@ -751,12 +732,13 @@ function armLua() {
           ljArmed = true;
           Interceptor.attach(pj, {
             onEnter: function (a) {
-              // v174: passive observer only (see lua_* hooks above)
               luaCalls++;
+              maybeTick();
               if (!luaStatePtr) {
                 luaStatePtr = a[0];
                 emit({ ev: 'lua_state', via: 'callJavaStaticMethod', p: luaStatePtr.toString() });
               }
+              if (luaInj === 0 && luaCalls >= 3) luaRunInject();
             }
           });
           emit({ ev: 'lua_hooked', sym: 'callJavaStaticMethod' });
@@ -770,8 +752,7 @@ function armLua() {
       Interceptor.attach(fx, {
         onEnter: function (a) {
           try { this.fp = a[1].readCString(); } catch (e) { this.fp = '?'; }
-          // v174: log only, no injection from inside the app's execution
-          if (luaInj === 0 && luaStatePtr) emit({ ev: 'execfile', f: this.fp });
+          if (luaInj === 0 && luaStatePtr) { emit({ ev: 'execfile', f: this.fp }); luaRunInject(); }
         }
       });
       emit({ ev: 'lua_hooked', sym: 'executeScriptFile' });
@@ -782,10 +763,11 @@ function armLua() {
     if (flb && !flb.isNull()) {
       Interceptor.attach(flb, {
         onEnter: function (a) {
-          // v174: passive observer only
           try {
             if (!luaStatePtr && !a[0].isNull()) luaStatePtr = a[0];
           } catch (e) {}
+          if (luaInj === 0 && luaStatePtr) { emit({ ev: 'lb_inject' }); luaRunInject(); }
+          else if (luaInj !== 0) maybeTick();
         }
       });
       emit({ ev: 'lua_hooked', sym: 'luaLoadBuffer' });
@@ -793,14 +775,6 @@ function armLua() {
   } catch (e5) { emit({ ev: 'lua_hook_err', sym: 'luaLoadBuffer', e: String(e5) }); }
   emit({ ev: 'lua_armed' });
 }
-// heartbeat: observe tick engine health even when gates swallow ticks
-setInterval(function () {
-  if (luaInj !== 0) {
-    emit({ ev: 'tick_hb', n: tickN, busy: tickBusy,
-           since: Date.now() - lastTickAt, inj: luaInj,
-           state: luaStatePtr ? 1 : 0 });
-  }
-}, 15000);
 var luaStateSlot = null;
 var ljArmed = false;
 
@@ -814,8 +788,8 @@ setInterval(function () {
       luaStatePtr = p;
       slotSeenAt = Date.now();
       emit({ ev: 'lua_state', via: 's_luaState', p: p.toString() });
-      // primary injection path (the only one proven to fire in practice:
-      // the lua_* onEnter hooks land on symbols the app never calls again)
+      // only inject from the Lua thread (hooks above); if no hook ever
+      // fired, last-resort injection from JS after a 15s grace period
       if (luaInj === 0 && !jsRetryStarted) {
         jsRetryStarted = true;
         var tries = 0;
