@@ -721,13 +721,14 @@ function armLua() {
     try {
       Interceptor.attach(p, {
         onEnter: function (a) {
+          // v174: passive observer only. Any pcall/inject from inside the
+          // app's own lua_pcall nests re-entrantly and can deadlock the
+          // whole JS runtime (heartbeat stopped at ~15s in every run).
           luaCalls++;
-          maybeTick();
           if (!luaStatePtr) {
             luaStatePtr = a[0];
             emit({ ev: 'lua_state', via: n, p: luaStatePtr.toString() });
           }
-          if (luaInj === 0 && luaCalls >= 3) luaRunInject();
         }
       });
       emit({ ev: 'lua_hooked', sym: n });
@@ -750,13 +751,12 @@ function armLua() {
           ljArmed = true;
           Interceptor.attach(pj, {
             onEnter: function (a) {
+              // v174: passive observer only (see lua_* hooks above)
               luaCalls++;
-              maybeTick();
               if (!luaStatePtr) {
                 luaStatePtr = a[0];
                 emit({ ev: 'lua_state', via: 'callJavaStaticMethod', p: luaStatePtr.toString() });
               }
-              if (luaInj === 0 && luaCalls >= 3) luaRunInject();
             }
           });
           emit({ ev: 'lua_hooked', sym: 'callJavaStaticMethod' });
@@ -770,7 +770,8 @@ function armLua() {
       Interceptor.attach(fx, {
         onEnter: function (a) {
           try { this.fp = a[1].readCString(); } catch (e) { this.fp = '?'; }
-          if (luaInj === 0 && luaStatePtr) { emit({ ev: 'execfile', f: this.fp }); luaRunInject(); }
+          // v174: log only, no injection from inside the app's execution
+          if (luaInj === 0 && luaStatePtr) emit({ ev: 'execfile', f: this.fp });
         }
       });
       emit({ ev: 'lua_hooked', sym: 'executeScriptFile' });
@@ -781,11 +782,10 @@ function armLua() {
     if (flb && !flb.isNull()) {
       Interceptor.attach(flb, {
         onEnter: function (a) {
+          // v174: passive observer only
           try {
             if (!luaStatePtr && !a[0].isNull()) luaStatePtr = a[0];
           } catch (e) {}
-          if (luaInj === 0 && luaStatePtr) { emit({ ev: 'lb_inject' }); luaRunInject(); }
-          else if (luaInj !== 0) maybeTick();
         }
       });
       emit({ ev: 'lua_hooked', sym: 'luaLoadBuffer' });
