@@ -136,8 +136,10 @@ jobs:
           wc -l logcat_checkpatch.txt || true
 
       - name: verdict
+        if: always()
         run: |
           set -x
+          touch logcat_checkpatch.txt
           {
             echo "## checkpatch verdict"
             echo ""
