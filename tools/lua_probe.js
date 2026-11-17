@@ -93,9 +93,13 @@ var CODE = [
   'return table.concat(out, "\\n")'
 ].join('\n');
 
+var lastAttempt = 0;
 function runInject() {
   if (injState === 2 || !L) return;
-  if (attempts >= 40) { injState = 2; send({ ev: 'probe_giveup' }); return; }
+  var now = Date.now();
+  if (now - lastAttempt < 800) return;   // throttle: ~1 attempt/sec
+  lastAttempt = now;
+  if (attempts >= 400) { injState = 2; send({ ev: 'probe_giveup' }); return; }
   attempts++;
   try {
     var codeStr = Memory.allocUtf8String(CODE);
@@ -141,7 +145,35 @@ function onLuaCall(a, via) {
     L = a[0];
     send({ ev: 'lua_state', via: via, p: L.toString() });
   }
-  if (injState !== 2 && calls > 3) runInject();
+  if (injState !== 2) runInject();
+}
+
+// Heartbeat path: LuaJavaBridge::callJavaStaticMethod runs every ~3s once
+// the game loop is up (getServerTime). That is the reliable retry window:
+// AssetMgr may not exist during the early script-loading calls.
+function armBridgeHook() {
+  if (!mod) return;
+  var syms = [];
+  try { syms = mod.enumerateSymbols(); } catch (e) { return; }
+  for (var i = 0; i < syms.length; i++) {
+    var s = syms[i];
+    if (s.type !== 'function') continue;
+    if (s.name.indexOf('callJavaStaticMethod') < 0) continue;
+    try {
+      Interceptor.attach(s.address, {
+        onEnter: function (a) {
+          try {
+            if (!L && a[0] && !a[0].isNull()) {
+              L = a[0];
+              send({ ev: 'lua_state', via: 'callJavaStaticMethod', p: L.toString() });
+            }
+            if (injState !== 2) runInject();
+          } catch (e) {}
+        }
+      });
+      send({ ev: 'probe_hooked', sym: s.name.slice(0, 80) });
+    } catch (e) {}
+  }
 }
 
 function armNow() {
@@ -155,6 +187,7 @@ function armNow() {
       send({ ev: 'probe_hooked', sym: n });
     } catch (e) {}
   });
+  armBridgeHook();
   send({ ev: 'probe_armed' });
 }
 
