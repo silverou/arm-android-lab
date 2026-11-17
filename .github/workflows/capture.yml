@@ -10,6 +10,13 @@ on:
           - original
           - checkpatch
         default: original
+      patch_target:
+        description: "checkpatch content target: so (SecurityJni bypass) or json (bisect)"
+        type: choice
+        options:
+          - so
+          - json
+        default: so
 
 jobs:
   capture:
@@ -154,7 +161,7 @@ jobs:
             curl -sSL -o ci_lab/input/hepy_879872.apk               "https://github.com/silverou/arm-android-lab/releases/download/payload-v1/hepy_2.0.4.apk"
             curl -sSL -o /tmp/uber-apk-signer.jar               "https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar"
             keytool -genkeypair -keystore ci_lab/debug.jks -storetype JKS               -storepass android -keypass android -alias androiddebugkey               -dname "CN=debug,O=debug,C=US" -keyalg RSA -keysize 2048 -validity 10000
-            env APKLAB="$PWD/ci_lab"                 CHECKPATCH_SRC_APK="$PWD/ci_lab/input/hepy_879872.apk"                 UBER_JAR=/tmp/uber-apk-signer.jar                 JAVA_BIN=java JAVAC_BIN=javac                 KEYSTORE="$PWD/ci_lab/debug.jks"                 python3 tools/build_checkpatched_sf.py 2>&1 | tee build_checkpatch.log
+            env APKLAB="$PWD/ci_lab"                 CHECKPATCH_SRC_APK="$PWD/ci_lab/input/hepy_879872.apk"                 UBER_JAR=/tmp/uber-apk-signer.jar                 JAVA_BIN=java JAVAC_BIN=javac                 KEYSTORE="$PWD/ci_lab/debug.jks"                 CONTENT_TARGET="${{ inputs.patch_target }}"                 python3 tools/build_checkpatched_sf.py 2>&1 | tee build_checkpatch.log
             cp ci_lab/build/hepy_2.0.4_checkpatched.apk app.apk
           else
             curl -sL -o app.apk "https://github.com/silverou/arm-android-lab/releases/download/payload-v1/hepy_2.0.4.apk"
