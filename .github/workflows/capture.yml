@@ -21,6 +21,10 @@ on:
         description: "load tools/lua_probe.js into att1/att2 (read-only asset probe; use with apk_source=original)"
         type: boolean
         default: false
+      probe_bundle:
+        description: "extra frida bundles for att1/att2 (comma list): xxtea_key.js,dex_probe.js,so_dump.js"
+        type: string
+        default: ""
 
 jobs:
   capture:
@@ -458,6 +462,9 @@ jobs:
           fi
           PROBE_ARG=""
           if [ "${{ inputs.probe }}" = "true" ]; then PROBE_ARG="tools/lua_probe.js"; fi
+          if [ -n "${{ inputs.probe_bundle }}" ]; then
+            for b in $(echo "${{ inputs.probe_bundle }}" | tr ',' ' '); do PROBE_ARG="$PROBE_ARG tools/$b"; done
+          fi
           echo "PROBE_ARG=$PROBE_ARG"
           DEATH_TAG=att1 BUNDLE_SET=v66 timeout 160 python3 tools/run_capture.py 100 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/jprobe.js $PROBE_ARG > hook_out.txt 2>&1 || true
           kill $TAPPER $SEQP 2>/dev/null || true
@@ -639,6 +646,9 @@ jobs:
           name: capture-out
           path: |
             build_checkpatch.log
+            xxtea_key.txt
+            sodump_*.bin
+            dexdump_probe.txt
             logcat_plain.txt
             logcat_frida.txt
             logcat_att1.txt
