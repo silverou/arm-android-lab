@@ -83,11 +83,33 @@ function armOnModule(m) {
         var keyLen = a[3].toInt32();
         capture('decryptXXTEALua', a[2], keyLen);
       })) hooked++;
-    } else if (nm === 'xxtea_decrypt' || nm.indexOf('xxtea_decrypt') === 0) {
+    } else if (nm.toLowerCase().indexOf('xxtea') >= 0 &&
+               nm.toLowerCase().indexOf('decrypt') >= 0 &&
+               nm.indexOf('decryptXXTEALua') < 0) {
+      // catch mangled _Z13xxtea_decryptPhjS_jPj (classic C API):
       // (const void* data, size_t len, const void* key, size_t keyLen)
+      // Mangled forms can permute arg order; capture key-ish args defensively.
       if (hookSymbol(s, function (a) {
-        var keyLen = a[3].toInt32();
-        capture('xxtea_decrypt', a[2], keyLen);
+        try {
+          var keyLen = a[3].toInt32();
+          if (keyLen > 0 && keyLen <= 64) capture('xxtea_decrypt', a[2], keyLen);
+        } catch (e) {}
+        try {
+          var kl2 = a[2].toInt32();
+          if (kl2 > 7 && kl2 <= 64) capture('xxtea_decrypt.alt', a[3], kl2);
+        } catch (e) {}
+      })) hooked++;
+    } else if (nm.indexOf('setXXTEAKeyAndSign') >= 0) {
+      // LuaStack::setXXTEAKeyAndSign(const char* key, int keyLen, const char* sign, int signLen)
+      if (hookSymbol(s, function (a) {
+        try {
+          var kl = a[2].toInt32();
+          capture('setXXTEAKeyAndSign', a[1], kl);
+        } catch (e) {}
+        try {
+          var sl = a[4].toInt32();
+          capture('setXXTEAKeyAndSign.sign', a[3], sl);
+        } catch (e) {}
       })) hooked++;
     } else if (nm.indexOf('setHongenKAndS') >= 0) {
       // (const char* key, const char* sign) or (this, key, sign)
