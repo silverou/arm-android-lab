@@ -487,6 +487,7 @@ jobs:
             TAPPER=$!
             echo "===== v164 pin MMKV deviceid to trusted d92c80 (app is dead) ====="
             sudo docker exec redroid /system/bin/sh -c 'rm -f /data/user/0/com.ihuman.pinyin/files/no_sms.flag /data/user/0/com.ihuman.pinyin/files/sms_sent.flag' || true
+            sudo docker exec redroid /system/bin/sh -c 'echo 1 > /data/user/0/com.ihuman.pinyin/files/no_sms.flag' || true
             MMDIR=/data/user/0/com.ihuman.pinyin/files/mmkv
             sudo docker exec redroid /system/bin/sh -c "ls -la $MMDIR" > mmkv_ls.txt 2>/dev/null || true
             cat mmkv_ls.txt || true
@@ -530,7 +531,7 @@ jobs:
             sudo dmesg 2>/dev/null | tail -40 > dmesg_host2.txt || true
           fi
           sudo docker exec redroid /system/bin/cat /data/user/0/com.ihuman.pinyin/files/v120_dump.txt > /tmp/v120_mid.txt 2>/dev/null || true
-          if ! grep -aq '"ev": "tick"' hook_out2.txt || ! grep -aq 'LOGIN_START' /tmp/v120_mid.txt; then
+          if false; then  # v177 dump-only run: no SMS, no login phase
             echo "===== attempt3 (v165 config): wait for relayed OTP, then send+login in ONE session ====="
             GOT=0
             for w in $(seq 1 60); do
