@@ -52,6 +52,12 @@ SO_PATCH_OFF = 0x2AB08
 SO_ORIG_BYTES = bytes.fromhex("e0031faa")        # mov x0, xzr (orr x0, xzr, xzr)
 SO_PATCH_BYTES = bytes.fromhex("13000014")       # b +0x4c -> 0x2ab54
 
+# CONTENT_TARGET=so   -> patch libihcommon.so (SecurityJni bypass)   [default]
+# CONTENT_TARGET=json -> patch a benign asset instead (bisect: is 7001
+#                        caused by .so self-check or by ANY content edit?)
+CONTENT_TARGET = os.environ.get("CONTENT_TARGET", "so")
+JSON_NAME = "assets/res/scenes/pinyin/module/book/config/bookcfg.json"
+
 SIGNER_JAVA = r'''
 import com.android.apksig.ApkSigner;
 import java.io.File;
@@ -210,18 +216,25 @@ def build(convention: str):
             p.unlink()
 
     zin = zipfile.ZipFile(APK)
-    orig_so = zin.read(SO_NAME)
-    new_so = patch_so(orig_so)
-    print("[build] patched %s: %d -> %d bytes" % (SO_NAME, len(orig_so), len(new_so)))
+    if CONTENT_TARGET == "json":
+        target_name = JSON_NAME
+        orig_target = zin.read(target_name)
+        new_target = orig_target + b"\n"  # benign edit: changes digest only
+    else:
+        target_name = SO_NAME
+        orig_target = zin.read(target_name)
+        new_target = patch_so(orig_target)
+    print("[build][%s] patched %s: %d -> %d bytes" %
+          (CONTENT_TARGET, target_name, len(orig_target), len(new_target)))
 
     # patch MANIFEST
     mf = zin.read("META-INF/MANIFEST.MF")
-    sec = section_bytes_for(mf, SO_NAME, convention)
-    m = re.search(rb"(Name: " + re.escape(SO_NAME.encode()) +
+    sec = section_bytes_for(mf, target_name, convention)
+    m = re.search(rb"(Name: " + re.escape(target_name.encode()) +
                   rb"\r\nSHA-256-Digest: )([A-Za-z0-9+/=]+)", sec)
     if not m:
-        raise SystemExit("SO section not found in MANIFEST")
-    new_digest = sha256b64(new_so)
+        raise SystemExit("target section not found in MANIFEST: %s" % target_name)
+    new_digest = sha256b64(new_target)
     new_sec = sec[:m.start(2)] + new_digest.encode() + sec[m.end(2):]
     # rebuild mf by replacing this section's bytes
     if mf.find(sec) < 0:
@@ -239,11 +252,11 @@ def build(convention: str):
     if n1 != 1:
         raise SystemExit("SF header digest not patched")
     # entry section in .SF
-    sf_sec = section_bytes_for(sf, SO_NAME, convention)
-    m2 = re.search(rb"(Name: " + re.escape(SO_NAME.encode()) +
+    sf_sec = section_bytes_for(sf, target_name, convention)
+    m2 = re.search(rb"(Name: " + re.escape(target_name.encode()) +
                    rb"\r\nSHA-256-Digest: )([A-Za-z0-9+/=]+)", sf_sec)
     if not m2:
-        raise SystemExit("SO section not found in .SF")
+        raise SystemExit("target section not found in .SF: %s" % target_name)
     new_sf_digest = sha256b64(new_sec)
     new_sf_sec = sf_sec[:m2.start(2)] + new_sf_digest.encode() + sf_sec[m2.end(2):]
     if sf.find(sf_sec) < 0:
@@ -260,8 +273,8 @@ def build(convention: str):
                 data = mf_new
             elif name == sf_name:
                 data = sf_new
-            elif name == SO_NAME:
-                data = new_so
+            elif name == target_name:
+                data = new_target
             else:
                 data = zin.read(name)
             zi = zipfile.ZipInfo(name, date_time=item.date_time)
@@ -370,8 +383,18 @@ def sign():
 
 def verify(convention: str):
     z = zipfile.ZipFile(FINAL)
-    so = z.read(SO_NAME)
-    assert so[SO_PATCH_OFF:SO_PATCH_OFF + 4] == SO_PATCH_BYTES, "so patch missing"
+    if CONTENT_TARGET == "json":
+        target_name = JSON_NAME
+        orig = zipfile.ZipFile(APK)
+        assert z.read(target_name) != orig.read(target_name), "json target unchanged"
+        assert z.read(SO_NAME) == orig.read(SO_NAME), "so must stay original in json mode"
+        orig.close()
+        print("[verify] json target changed, so untouched")
+    else:
+        target_name = SO_NAME
+        so = z.read(SO_NAME)
+        assert so[SO_PATCH_OFF:SO_PATCH_OFF + 4] == SO_PATCH_BYTES, "so patch missing"
+    target_bytes = z.read(target_name)
     # resources.arsc must be stored + 4-aligned (Android R+ install rule, -124)
     zi = z.getinfo("resources.arsc")
     assert zi.compress_type == zipfile.ZIP_STORED, "arsc not stored"
@@ -385,15 +408,15 @@ def verify(convention: str):
     mf = z.read("META-INF/MANIFEST.MF")
     sf = z.read(next(n for n in z.namelist()
                      if n.upper().startswith("META-INF/") and n.upper().endswith(".SF")))
-    # 1) manifest digest for so
-    sec = section_bytes_for(mf, SO_NAME, convention)
+    # 1) manifest digest for target
+    sec = section_bytes_for(mf, target_name, convention)
     m = re.search(rb"SHA-256-Digest: ([A-Za-z0-9+/=]+)", sec)
-    assert m.group(1).decode() == sha256b64(so), "MANIFEST digest wrong"
+    assert m.group(1).decode() == sha256b64(target_bytes), "MANIFEST digest wrong"
     # 2) sf header
     m = re.search(rb"SHA-256-Digest-Manifest: ([A-Za-z0-9+/=]+)", sf)
     assert m.group(1).decode() == sha256b64(mf), "SF header wrong"
     # 3) sf entry digest over new manifest section
-    sf_sec = section_bytes_for(sf, SO_NAME, convention)
+    sf_sec = section_bytes_for(sf, target_name, convention)
     m = re.search(rb"SHA-256-Digest: ([A-Za-z0-9+/=]+)", sf_sec)
     assert m.group(1).decode() == sha256b64(sec), "SF entry digest wrong"
     # 4) unmodified sample entries still chain
@@ -412,7 +435,7 @@ def verify(convention: str):
         if not m:
             continue
         name = m.group(1).decode("utf-8", "replace").replace("\r\n ", "")
-        if name == SO_NAME:
+        if name == target_name:
             continue
         if name not in sf_map:
             continue
@@ -437,7 +460,7 @@ def verify(convention: str):
     # 6) only intended content diffs
     diffs = []
     for n in orig.namelist():
-        if n in (SO_NAME, "META-INF/MANIFEST.MF"):
+        if n in (target_name, "META-INF/MANIFEST.MF"):
             continue
         if n.upper().startswith("META-INF/") and n.upper().endswith(".SF"):
             continue
