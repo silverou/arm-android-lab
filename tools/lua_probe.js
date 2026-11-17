@@ -15,7 +15,8 @@
 var L = null;
 var fns = {};
 var mod = null;
-var injState = 0;
+var injState = 0;      // 0=retry on next lua call, 2=done
+var attempts = 0;
 var calls = 0;
 var armed = false;
 
@@ -43,6 +44,12 @@ var CODE = [
   'P("PROBE_VER:"..tostring(_VERSION))',
   'local AM = _G.AssetMgr',
   'P("AM:"..type(AM))',
+  'if type(AM) ~= "table" and package and package.loaded then',
+  '  local ms = {}',
+  '  for k in pairs(package.loaded) do ms[#ms+1] = tostring(k) end',
+  '  table.sort(ms)',
+  '  P("MODS:"..table.concat(ms, ",", 1, math.min(#ms, 80)))',
+  'end',
   'if type(AM) == "table" then',
   '  local ks = {}',
   '  for k in pairs(AM) do ks[#ks+1] = tostring(k) end',
@@ -87,8 +94,9 @@ var CODE = [
 ].join('\n');
 
 function runInject() {
-  if (injState !== 0 || !L) return;
-  injState = 1;
+  if (injState === 2 || !L) return;
+  if (attempts >= 40) { injState = 2; send({ ev: 'probe_giveup' }); return; }
+  attempts++;
   try {
     var codeStr = Memory.allocUtf8String(CODE);
     var fnLoad = new NativeFunction(fns['luaL_loadbuffer'], 'int',
@@ -99,27 +107,31 @@ function runInject() {
                                      ['pointer', 'int', 'pointer']);
     var nameStr = Memory.allocUtf8String('=frida_probe');
     var r = fnLoad(L, codeStr, CODE.length, nameStr);
-    send({ ev: 'probe_load', r: r });
-    if (r === 0) {
-      var rc = fnPcall(L, 0, 1, 0);  // 1 result
-      send({ ev: 'probe_pcall', rc: rc });
-      if (rc === 0) {
-        var szp = Memory.alloc(4);
-        var ps = fnToStr(L, -1, szp);
-        if (!ps.isNull()) send({ ev: 'probe_out', data: ps.readUtf8String() });
-        // pop result (and error object on failure) to keep the stack sane
-        try {
-          var fnPop = mod.findExportByName('lua_settop');
-          if (fnPop) new NativeFunction(fnPop, 'void', ['pointer', 'int'])(L, -2);
-        } catch (e2) {}
-      } else {
-        var szp2 = Memory.alloc(4);
-        var es = fnToStr(L, -1, szp2);
-        if (!es.isNull()) send({ ev: 'probe_err', msg: es.readUtf8String() });
-      }
+    if (r !== 0) {
+      send({ ev: 'probe_load', r: r, attempt: attempts });
+      return;
+    }
+    var rc = fnPcall(L, 0, 1, 0);  // 1 result
+    if (rc === 0) {
+      var szp = Memory.alloc(4);
+      var ps = fnToStr(L, -1, szp);
+      var data = ps.isNull() ? '' : ps.readUtf8String();
+      send({ ev: 'probe_out', attempt: attempts, data: data });
+      // keep probing only while AssetMgr is not yet initialized
+      if (data.indexOf('AM:table') >= 0) injState = 2;
+      try {
+        var fnPop = mod.findExportByName('lua_settop');
+        if (fnPop) new NativeFunction(fnPop, 'void', ['pointer', 'int'])(L, -2);
+      } catch (e2) {}
+    } else {
+      var szp2 = Memory.alloc(4);
+      var es = fnToStr(L, -1, szp2);
+      send({ ev: 'probe_err', attempt: attempts, msg: es.isNull() ? '' : es.readUtf8String() });
+      injState = 2;  // chunk errors are unlikely to heal; stop
     }
   } catch (e) {
     send({ ev: 'probe_exc', e: String(e) });
+    injState = 2;
   }
 }
 
@@ -129,7 +141,7 @@ function onLuaCall(a, via) {
     L = a[0];
     send({ ev: 'lua_state', via: via, p: L.toString() });
   }
-  if (injState === 0 && calls > 5) runInject();
+  if (injState !== 2 && calls > 3) runInject();
 }
 
 function armNow() {
