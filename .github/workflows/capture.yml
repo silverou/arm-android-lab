@@ -605,7 +605,23 @@ jobs:
             done
             tools/gx.sh "logcat -d -v time" > logcat_att3.txt 2>/dev/null || true
           fi
-          echo "--- v177 lua script dump pull ---"
+          echo "--- ABC probe pulls (xxtea key / sodump / dexdump) ---"
+for f in xxtea_key.txt; do
+  sudo docker exec redroid /system/bin/cat "/data/user/0/com.ihuman.pinyin/files/$f" > "$f" 2>/dev/null || true
+done
+ls -la xxtea_key.txt 2>/dev/null || true
+rm -rf sodump_out dexdump_out && mkdir -p sodump_out dexdump_out
+for f in $(sudo docker exec redroid /system/bin/sh -c 'ls /data/user/0/com.ihuman.pinyin/files/sodump_*.bin 2>/dev/null' || true); do
+  b=$(basename "$f")
+  sudo docker exec redroid /system/bin/cat "$f" > "sodump_out/$b" 2>/dev/null || true
+done
+for f in $(sudo docker exec redroid /system/bin/sh -c 'ls /data/user/0/com.ihuman.pinyin/files/dexdump_*.bin 2>/dev/null' || true); do
+  b=$(basename "$f")
+  sudo docker exec redroid /system/bin/cat "$f" > "dexdump_out/$b" 2>/dev/null || true
+done
+ls -la sodump_out | head -12 || true
+ls -la dexdump_out | head -12 || true
+echo "--- v177 lua script dump pull ---"
           sudo docker exec redroid /system/bin/sh -c 'cd /data/user/0/com.ihuman.pinyin/files && tar czf /tmp/luadump.tgz luadump_*.lua luadump_map.txt 2>/dev/null; ls -la /tmp/luadump.tgz' || true
           sudo docker exec redroid /system/bin/cat /tmp/luadump.tgz > luadump.tgz 2>/dev/null || true
           ls -la luadump.tgz || true
@@ -647,8 +663,8 @@ jobs:
           path: |
             build_checkpatch.log
             xxtea_key.txt
-            sodump_*.bin
-            dexdump_probe.txt
+            sodump_out
+            dexdump_out
             logcat_plain.txt
             logcat_frida.txt
             logcat_att1.txt
