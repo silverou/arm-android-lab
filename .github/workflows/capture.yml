@@ -514,7 +514,7 @@ jobs:
               sudo docker exec redroid /system/bin/sh -c "grep -rla $OLDID /data/user/0/com.ihuman.pinyin/ 2>/dev/null" > mmkv_oldid_files.txt || true
               cat mmkv_oldid_files.txt || true
             fi
-            DEATH_TAG=att2 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/jprobe.js > hook_out2.txt 2>&1 || true
+            DEATH_TAG=att2 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/jprobe.js tools/lua_dump_full.js > hook_out2.txt 2>&1 || true
             kill $TAPPER 2>/dev/null || true
             echo "===== hook_out attempt2 (v66) ====="
             tail -40 hook_out2.txt || true
@@ -560,6 +560,11 @@ jobs:
             done
             tools/gx.sh "logcat -d -v time" > logcat_att3.txt 2>/dev/null || true
           fi
+          echo "--- v177 lua script dump pull ---"
+          sudo docker exec redroid /system/bin/sh -c 'cd /data/user/0/com.ihuman.pinyin/files && tar czf /tmp/luadump.tgz luadump_*.lua luadump_map.txt 2>/dev/null; ls -la /tmp/luadump.tgz' || true
+          sudo docker exec redroid /system/bin/cat /tmp/luadump.tgz > luadump.tgz 2>/dev/null || true
+          ls -la luadump.tgz || true
+
           echo "--- final mitm dump (post attempt2) ---"
           cp flows.txt flows1.txt 2>/dev/null || true
           python3 tools/flows_dump.py || true
@@ -628,6 +633,7 @@ jobs:
             mmkv_pin.log
             mmkv_oldid_files.txt
             hook_out3.txt
+            luadump.tgz
             logcat_att3.txt
             v120_dump3.txt
             otp_relay.log
