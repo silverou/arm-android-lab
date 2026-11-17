@@ -23,9 +23,11 @@ import hashlib
 import io
 import os
 import re
+import struct
 import subprocess
 import sys
 import zipfile
+import zlib
 from pathlib import Path
 
 LAB = Path(os.environ.get("APKLAB", r"F:\apk-lab"))
@@ -283,18 +285,74 @@ def compile_signer():
     print("[sign] compiled")
 
 
+def py_zipalign(src, dst):
+    """Pure-python zipalign: pad STORED entries so data starts aligned.
+
+    Matches AOSP zipalign's padding style: dummy extra-field TLV 0x1337.
+    Alignment rules: resources.arsc and misc STORED -> 4; STORED .so -> 4096.
+    """
+    zin = zipfile.ZipFile(src)
+    with open(dst, "wb") as out:
+        central = []
+        for item in zin.infolist():
+            raw = zin.read(item.filename)
+            if item.compress_type == zipfile.ZIP_STORED:
+                data = raw
+                if item.filename.endswith(".so"):
+                    align = 4096
+                else:
+                    align = 4
+            elif item.compress_type == zipfile.ZIP_DEFLATED:
+                co = zlib.compressobj(9, zlib.DEFLATED, -15)
+                data = co.compress(raw) + co.flush()
+                align = 0
+            else:
+                raise SystemExit("unsupported zip method %d: %s" %
+                                 (item.compress_type, item.filename))
+            name = item.filename.encode("utf-8")
+            flags = 0 if name.isascii() else 0x800
+            crc = zlib.crc32(raw) & 0xFFFFFFFF
+            dt = item.date_time
+            dostime = (dt[3] << 11) | (dt[4] << 5) | (dt[5] // 2)
+            dosdate = ((dt[0] - 1980) << 9) | (dt[1] << 5) | dt[2]
+            lho = out.tell()
+            base = lho + 30 + len(name) + len(item.extra)
+            pad = 0
+            if align:
+                pad = (align - base % align) % align
+                if 0 < pad < 4:
+                    pad += align  # keep alignment, make room for TLV header
+            if pad:
+                extra = item.extra + struct.pack("<HH", 0x1337, pad - 4) + b"\x00" * (pad - 4)
+            else:
+                extra = item.extra
+            out.write(struct.pack("<IHHHHHIIIHH", 0x04034B50, 20, flags,
+                                  item.compress_type, dostime, dosdate,
+                                  crc, len(data), len(raw), len(name), len(extra)))
+            out.write(name)
+            out.write(extra)
+            out.write(data)
+            central.append((item, name, extra, crc, len(data), len(raw),
+                            lho, flags, dostime, dosdate))
+        cd_start = out.tell()
+        for item, name, extra_c, crc, csz, usz, lho, flags, dostime, dosdate in central:
+            out.write(struct.pack("<IHHHHHHIIIHHHHHII", 0x02014B50,
+                                  (item.create_system << 8) | 20, 20, flags,
+                                  item.compress_type, dostime, dosdate,
+                                  crc, csz, usz, len(name), len(extra_c), 0,
+                                  0, item.internal_attr, item.external_attr, lho))
+            out.write(name)
+            out.write(extra_c)
+        cd_size = out.tell() - cd_start
+        n = len(central)
+        out.write(struct.pack("<IHHHHIIH", 0x06054B50, 0, 0, n, n,
+                              cd_size, cd_start, 0))
+    zin.close()
+    print("[sign] py_zipalign -> %s" % Path(dst).name)
+
+
 def align():
-    if not Path(ZIPALIGN).exists():
-        print("[sign] zipalign not found (%s) - skipping (v2 sign OK unaligned)" % ZIPALIGN)
-        import shutil
-        shutil.copy(REBUILT, ALIGNED)
-        return
-    r = subprocess.run([str(ZIPALIGN), "-p", "-f", "4", str(REBUILT), str(ALIGNED)],
-                       capture_output=True, text=True, timeout=1800)
-    if not ALIGNED.exists():
-        print(r.stdout[-500:], r.stderr[-500:])
-        raise SystemExit("zipalign failed")
-    print("[sign] aligned")
+    py_zipalign(REBUILT, ALIGNED)
 
 
 def sign():
@@ -314,6 +372,16 @@ def verify(convention: str):
     z = zipfile.ZipFile(FINAL)
     so = z.read(SO_NAME)
     assert so[SO_PATCH_OFF:SO_PATCH_OFF + 4] == SO_PATCH_BYTES, "so patch missing"
+    # resources.arsc must be stored + 4-aligned (Android R+ install rule, -124)
+    zi = z.getinfo("resources.arsc")
+    assert zi.compress_type == zipfile.ZIP_STORED, "arsc not stored"
+    with open(FINAL, "rb") as f:
+        f.seek(zi.header_offset)
+        hdr = f.read(30)
+        nlen, elen = struct.unpack_from("<HH", hdr, 26)
+        dstart = zi.header_offset + 30 + nlen + elen
+    assert dstart % 4 == 0, "arsc data offset %d not 4-aligned" % dstart
+    print("[verify] resources.arsc stored, data off %d (mod4=0)" % dstart)
     mf = z.read("META-INF/MANIFEST.MF")
     sf = z.read(next(n for n in z.namelist()
                      if n.upper().startswith("META-INF/") and n.upper().endswith(".SF")))
