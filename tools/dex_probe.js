@@ -1,122 +1,119 @@
 'use strict';
 /*
- * Probe B: dex-dump feasibility.
+ * Probe B v2: dex-dump feasibility, two lanes.
  *
- * The shell decrypts the business dex in memory and loads it; nothing
- * lands on disk. Before writing an ART-level dumper, this probes which
- * loading path the shell uses:
- *   - InMemoryDexClassLoader construction (constructor hook)
- *   - DexClassLoader with a file path (hook + record paths)
- *   - java.nio.ByteBuffer / dex decode entry points
- * Any hit tells us whether a memory-image dump is reachable at all.
+ * Lane 1 (native, primary): scan /proc/self/maps for readable anonymous /
+ * memfd mappings containing the dex magic (64 65 78 0a = "dex\n") and dump
+ * them to files. InMemoryDexClassLoader keeps dex as ByteBuffer -> memfd or
+ * anonymous mmap; this finds it regardless of the Java loader used.
  *
- * All events go through send() and land in hook_out*.txt.
+ * Lane 2 (Java): hook DexClassLoader / InMemoryDexClassLoader constructors
+ * and record the loading path (file paths => trivially dumpable; buffers =>
+ * lane 1 carries it).
+ *
+ * Output: /data/user/0/com.ihuman.pinyin/files/dexdump_<n>.bin
  */
-var EV = [];
-function ev(o) { send(o); }
+var DIR = '/data/user/0/com.ihuman.pinyin/files/';
+var fns = {};
+['fopen', 'fwrite', 'fclose'].forEach(function (n) {
+  var p = null;
+  try { p = Module.getGlobalExportByName(n); } catch (e) {}
+  if (p) fns[n] = new NativeFunction(p, 'pointer',
+    n === 'fwrite' ? ['pointer', 'size_t', 'size_t', 'pointer'] :
+    n === 'fclose' ? ['pointer'] : ['pointer', 'pointer']);
+});
+var ok = !!(fns.fopen && fns.fwrite && fns.fclose);
 
-function hookMethod(clsName, method, argNames, tag) {
+function writeFile(path, bytes, len) {
+  if (!ok) return false;
   try {
-    var C = Java.use(clsName);
-    C[method].overloads.forEach(function (ov) {
-      var where = tag + ':' + clsName + '.' + method;
-      ov.implementation = function () {
-        var out = { ev: 'dex_path', tag: where };
-        for (var i = 0; i < argNames.length && i < arguments.length; i++) {
-          try {
-            var a = arguments[i];
-            if (a === null || a === undefined) { out[argNames[i]] = String(a); continue; }
-            if (typeof a === 'string') {
-              out[argNames[i]] = a.slice(0, 160);
-            } else if (typeof a === 'number' || typeof a === 'boolean') {
-              out[argNames[i]] = a;
-            } else {
-              out[argNames[i]] = a.getClass ? a.getClass().getName() : String(a);
-            }
-          } catch (e) { out[argNames[i]] = '?'; }
-        }
-        try {
-          if (cacheDir) {
-            var r = Java.use('java.io.File').$new(cacheDir, 'dexdump_probe.txt');
-            var fos = Java.use('java.io.FileOutputStream').$new(r, true);
-            for (var k in out) {
-              if (k === 'ev' || k === 'tag') continue;
-              var v = String(out[k]) + '\n';
-              var b = Java.array('byte', (v.length));
-              for (var q = 0; q < v.length; q++) b[q] = v.charCodeAt(q) & 0xff;
-              fos.write(b);
-            }
-            fos.close();
-          }
-        } catch (e2) {}
-        ev(out);
-        return ov.apply(this, arguments);
-      };
-    });
-    ev({ ev: 'dex_hooked', tag: where });
+    var fp = fns.fopen(Memory.allocUtf8String(path), Memory.allocUtf8String('wb'));
+    if (fp.isNull()) return false;
+    var buf = Memory.alloc(len);
+    buf.writeByteArray(bytes);
+    fns.fwrite(buf, 1, len, fp);
+    fns.fclose(fp);
     return true;
+  } catch (e) { return false; }
+}
+
+var dumpedRanges = {};
+function dumpDexRanges() {
+  var found = 0;
+  var ranges;
+  try { ranges = Process.enumerateRanges('r--'); } catch (e) { send({ ev: 'dex_range_err', e: String(e) }); return; }
+  ranges.forEach(function (r) {
+    if (r.size < 4096 || r.size > 64 * 1024 * 1024) return;
+    var key = r.base.toString() + ':' + r.size;
+    if (dumpedRanges[key]) return;
+    var sig = null;
+    try { sig = r.base.readCString(4); } catch (e) { return; }
+    if (sig !== 'dex\n') return;
+    dumpedRanges[key] = 1;
+    found++;
+    try {
+      var size = Math.min(r.size, 32 * 1024 * 1024);
+      var bytes = new Uint8Array(r.base.readByteArray(size));
+      var fn = 'dexdump_' + found + '_' + r.base.toString().replace('0x', '') + '.bin';
+      var w = writeFile(DIR + fn, bytes, size);
+      send({ ev: 'dexdump', file: fn, base: r.base.toString(), size: size, written: w });
+    } catch (e2) {
+      send({ ev: 'dexdump_err', base: r.base.toString(), e: String(e2) });
+    }
+  });
+  send({ ev: 'dexdump_done', found: found });
+}
+
+// Lane 2: Java hooks (late-boot safe; uses the jprobe-proven pattern)
+var javaDone = false;
+function javaLane() {
+  if (javaDone) return;
+  if (typeof Java === 'undefined') {
+    send({ ev: 'jnope' });
+    return;
+  }
+  javaDone = true;
+  try {
+    Java.perform(function () {
+      var targets = [
+        ['dalvik.system.InMemoryDexClassLoader', '<init>', ['buffer', 'parent', 'loader']],
+        ['dalvik.system.DexClassLoader', '<init>', ['dexPath', 'optDir', 'libPath', 'parent']],
+        ['dalvik.system.PathClassLoader', '<init>', ['path', 'parent']],
+      ];
+      targets.forEach(function (t) {
+        try {
+          var C = Java.use(t[0]);
+          C[t[1]].overloads.forEach(function (ov) {
+            ov.implementation = function () {
+              var out = { ev: 'dex_loader', cls: t[0] };
+              for (var i = 0; i < t[2].length && i < arguments.length; i++) {
+                try {
+                  var a = arguments[i];
+                  if (a === null || a === undefined) { out[t[2][i]] = String(a); continue; }
+                  if (typeof a === 'string') out[t[2][i]] = a.slice(0, 140);
+                  else if (typeof a === 'object') out[t[2][i]] = (a.getClass ? a.getClass().getName() : 'obj');
+                  else out[t[2][i]] = String(a);
+                } catch (e) {}
+              }
+              send(out);
+              return ov.apply(this, arguments);
+            };
+          });
+          send({ ev: 'dex_hooked', cls: t[0] });
+        } catch (e) {
+          send({ ev: 'dex_hook_miss', cls: t[0], e: String(e).slice(0, 100) });
+        }
+      });
+    });
   } catch (e) {
-    ev({ ev: 'dex_hook_miss', tag: tag + ':' + clsName + '.' + method, e: String(e).slice(0, 120) });
-    return false;
+    send({ ev: 'dex_java_err', e: String(e) });
   }
 }
 
-var cacheDir = null;
-var booted = false;
-var counter = 0;
-
-function start() {
-  if (booted) return;
-  try { Java.perform(function () {}); } catch (e) { return; }
-  booted = true;
-  try {
-    var ctx = Java.use('android.app.ActivityThread').currentApplication().getApplicationContext();
-    cacheDir = ctx.getFilesDir().getAbsolutePath();
-    ev({ ev: 'dex_files_dir', dir: cacheDir });
-  } catch (e) { ev({ ev: 'dex_ctx_err', e: String(e).slice(0, 120) }); }
-
-  // loaders used by packers to run memory-only dex
-  hookMethod('dalvik.system.InMemoryDexClassLoader', '<init>',
-             ['byteBuffer', 'parent', 'loader'], 'inmem');
-  hookMethod('dalvik.system.DexClassLoader', '<init>',
-             ['dexPath', 'optDir', 'libPath', 'parent'], 'dexcl');
-  hookMethod('dalvik.system.PathClassLoader', '<init>',
-             ['path', 'parent'], 'pathcl');
-  hookMethod('dalvik.system.BaseDexClassLoader', '<init>',
-             ['dexPath', 'libPath', 'parent'], 'base');
-
-  // runtime dex-image surface (first step toward a real dumper)
-  try {
-    var DexFile = Java.use('dalvik.system.DexFile');
-    ev({ ev: 'dex_class', cls: 'dalvik.system.DexFile', ok: true });
-  } catch (e) {}
-
-  // scan loaded classes for dex-bearing names once the app is up
-  setInterval(function () {
-    counter++;
-    if (counter === 6 || counter === 20) {
-      try {
-        Java.perform(function () {
-          Java.enumerateClassLoaders({
-            onMatch: function (cl) {
-              var s = String(cl);
-              if (s.indexOf('Dex') >= 0 || s.indexOf('Path') >= 0 || s.indexOf('InMemory') >= 0) {
-                ev({ ev: 'dex_loader_seen', loader: s.slice(0, 160) });
-              }
-            },
-            onComplete: function () {}
-          });
-        });
-      } catch (e) { ev({ ev: 'dex_enum_err', e: String(e).slice(0, 120) }); }
-    }
-    if (counter > 40) { /* keep running; cheap */ }
-  }, 1500);
-}
-
-start();
-var tries = 0;
+var tick = 0;
 var poll = setInterval(function () {
-  tries++;
-  start();
-  if (booted && tries > 10) clearInterval(poll);
-}, 500);
+  tick++;
+  if (tick === 4 || tick === 12 || tick === 30) dumpDexRanges();
+  if (tick >= 6) javaLane();
+  if (tick > 70) clearInterval(poll);
+}, 1200);
