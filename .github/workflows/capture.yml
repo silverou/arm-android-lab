@@ -17,6 +17,10 @@ on:
           - so
           - json
         default: so
+      probe:
+        description: "load tools/lua_probe.js into att1/att2 (read-only asset probe; use with apk_source=original)"
+        type: boolean
+        default: false
 
 jobs:
   capture:
@@ -452,7 +456,10 @@ jobs:
             echo "nosms present -> blocking SMS"
             sudo docker exec redroid /system/bin/sh -c 'echo 1 > /data/user/0/com.ihuman.pinyin/files/no_sms.flag'
           fi
-          DEATH_TAG=att1 BUNDLE_SET=v66 timeout 160 python3 tools/run_capture.py 100 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/jprobe.js > hook_out.txt 2>&1 || true
+          PROBE_ARG=""
+          if [ "${{ inputs.probe }}" = "true" ]; then PROBE_ARG="tools/lua_probe.js"; fi
+          echo "PROBE_ARG=$PROBE_ARG"
+          DEATH_TAG=att1 BUNDLE_SET=v66 timeout 160 python3 tools/run_capture.py 100 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/jprobe.js $PROBE_ARG > hook_out.txt 2>&1 || true
           kill $TAPPER $SEQP 2>/dev/null || true
           kill $TCPD 2>/dev/null || true
           echo "--- mitm flows dump ---"
@@ -545,7 +552,7 @@ jobs:
               sudo docker exec redroid /system/bin/sh -c "grep -rla $OLDID /data/user/0/com.ihuman.pinyin/ 2>/dev/null" > mmkv_oldid_files.txt || true
               cat mmkv_oldid_files.txt || true
             fi
-            DEATH_TAG=att2 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/jprobe.js tools/lua_dump_full.js > hook_out2.txt 2>&1 || true
+            DEATH_TAG=att2 BUNDLE_SET=v66 timeout 300 python3 tools/run_capture.py 240 tools/unpin_native.js tools/scansrc.js tools/luadump.js tools/jprobe.js tools/lua_dump_full.js $PROBE_ARG > hook_out2.txt 2>&1 || true
             kill $TAPPER 2>/dev/null || true
             echo "===== hook_out attempt2 (v66) ====="
             tail -40 hook_out2.txt || true
