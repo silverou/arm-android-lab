@@ -1,0 +1,189 @@
+name: checkpatch
+
+# Build the MANIFEST+.SF double-patched APK (SecurityJni_check 4-byte
+# bypass) on CI, install it on redroid (native arm64 — no houdini AES
+# gate), launch, and harvest the verdict: did it pass the shell gates
+# (no 0xdead1402/7002) and survive SecurityJni_check (no strlen NULL
+# SIGSEGV)? No SMS / login involved.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  checkpatch:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: binder setup
+        run: |
+          set -x
+          sudo modprobe binder_linux devices="binder,hwbinder,vndbinder"
+          sudo mkdir -p /dev/binderfs
+          sudo mount -t binder binder /dev/binderfs
+          ls -la /dev/binderfs | head -8
+          command -v adb || timeout 150 bash -c 'sudo apt-get update -qq && sudo apt-get install -y -qq adb' || {
+            echo "apt adb unavailable, fetching static aarch64 build"
+            curl -sSL -m 240 -o /tmp/st.zip https://github.com/lzhiyong/android-sdk-tools/releases/download/35.0.2/android-sdk-tools-static-aarch64.zip
+            rm -rf /tmp/st && mkdir -p /tmp/st
+            python3 -c "import zipfile;zipfile.ZipFile('/tmp/st.zip').extractall('/tmp/st')"
+            ADB_BIN=$(find /tmp/st -name adb -type f | head -1)
+            echo "adb candidate: $ADB_BIN"
+            sudo install -m755 "$ADB_BIN" /usr/local/bin/adb
+          }
+          command -v adb; adb version | head -2
+          echo binder-ok
+
+      - name: redroid image pull
+        run: |
+          echo "start $(date -u +%T)"
+          timeout 480 sudo docker pull redroid/redroid:12.0.0-latest
+          echo "pulled $(date -u +%T)"
+
+      - name: redroid boot
+        run: |
+          set -x
+          echo "boot start $(date -u +%T)"
+          sudo docker rm -f redroid 2>/dev/null || true
+          sudo docker run -d --privileged --name redroid \
+            -v /dev/binderfs:/dev/binderfs \
+            -p 5555:5555 \
+            -p 5556:5555 \
+            redroid/redroid:12.0.0-latest \
+            androidboot.redroid_gpu_mode=guest
+          IP=$(sudo docker inspect -f '{{.NetworkSettings.IPAddress}}' redroid)
+          echo "bridge ip $IP"
+          adb kill-server || true
+          sleep 12
+          GUEST=0
+          GUEST_MODE=docker
+          ADB_SERIAL="$IP:5555"
+          READY='export PATH=/system/bin:/system/xbin:$PATH; service check package >/dev/null 2>&1 || exit 3; [ "$(getprop init.svc.surfaceflinger)" = running ] || exit 4; [ "$(getprop init.svc.zygote)" = running ] || exit 5; echo READY'
+          hits=0
+          for i in $(seq 1 48); do
+            ok=0
+            if sudo docker exec redroid /system/bin/sh -c "$READY" >/dev/null 2>&1; then
+              ok=1
+            fi
+            if [ "$ok" = "1" ]; then hits=$((hits+1)); else hits=0; fi
+            if [ "$hits" -ge 2 ]; then
+              GUEST=1
+              echo "READY stable after $((i*5))s mode=$GUEST_MODE"
+              break
+            fi
+            sleep 5
+          done
+          se=$(sudo docker exec redroid /system/bin/getenforce 2>/dev/null || true)
+          echo "selinux=$se"
+          if [ "$se" = "Enforcing" ]; then
+            sudo docker exec redroid /system/bin/setenforce 0 || true
+          fi
+          {
+            echo "GUEST_MODE=$GUEST_MODE"
+            echo "ADB_SERIAL=$ADB_SERIAL"
+            echo "BRIDGE_IP=$IP"
+          } >> "$GITHUB_ENV"
+          if [ "$GUEST" != "1" ]; then
+            echo "framework never became stable; guest boot stalled"
+            exit 1
+          fi
+          echo "boot done $(date -u +%T)"
+
+      - name: build checkpatched apk
+        run: |
+          set -x
+          mkdir -p ci_lab/input ci_lab/build
+          curl -sSL -o ci_lab/input/hepy_879872.apk \
+            "https://github.com/silverou/arm-android-lab/releases/download/payload-v1/hepy_2.0.4.apk"
+          ls -la ci_lab/input/hepy_879872.apk
+          curl -sSL -o /tmp/uber-apk-signer.jar \
+            "https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar"
+          ls -la /tmp/uber-apk-signer.jar
+          keytool -genkeypair -keystore ci_lab/debug.jks -storetype JKS \
+            -storepass android -keypass android -alias androiddebugkey \
+            -dname "CN=debug,O=debug,C=US" -keyalg RSA -keysize 2048 -validity 10000
+          env APKLAB="$PWD/ci_lab" \
+              CHECKPATCH_SRC_APK="$PWD/ci_lab/input/hepy_879872.apk" \
+              UBER_JAR=/tmp/uber-apk-signer.jar \
+              JAVA_BIN=java JAVAC_BIN=javac \
+              KEYSTORE="$PWD/ci_lab/debug.jks" \
+              python3 tools/build_checkpatched_sf.py 2>&1 | tee build_checkpatch.log
+          ls -la ci_lab/build/
+
+      - name: install and launch
+        run: |
+          set -x
+          APK=ci_lab/build/hepy_2.0.4_checkpatched.apk
+          sudo docker cp "$APK" redroid:/data/local/tmp/app.apk
+          out=$(tools/gx.sh "pm install -r -g /data/local/tmp/app.apk" 2>&1 | tail -5)
+          echo "$out"
+          echo "$out" | grep -a Success
+          tools/gx.sh "pm path com.ihuman.pinyin"
+          tools/gx.sh "input keyevent 224" || true
+          tools/gx.sh "wm dismiss-keyguard" || true
+          tools/gx.sh "settings put system screen_off_timeout 2147483647" || true
+          tools/gx.sh "svc power stayon true" || true
+          tools/gx.sh "logcat -c" || true
+          tools/gx.sh "am start -n com.ihuman.pinyin/org.cocos2dx.lua.AppActivity" || true
+          sleep 75
+          tools/gx.sh "logcat -d -v time" > logcat_checkpatch.txt 2>/dev/null || true
+          wc -l logcat_checkpatch.txt || true
+
+      - name: verdict
+        run: |
+          set -x
+          {
+            echo "## checkpatch verdict"
+            echo ""
+            echo "### shell gates"
+            echo "- 0xdead1402 (cert) hits: $(grep -ac '0xdead1402' logcat_checkpatch.txt || true)"
+            echo "- 0xdead7002 (digest) hits: $(grep -ac '0xdead7002' logcat_checkpatch.txt || true)"
+            echo "- any 0xdead: $(grep -ac '0xdead' logcat_checkpatch.txt || true)"
+            echo ""
+            echo "### SecurityJni"
+            echo "- SecurityJni mentions: $(grep -ac 'SecurityJni' logcat_checkpatch.txt || true)"
+            echo "- Fatal signal: $(grep -ac 'Fatal signal' logcat_checkpatch.txt || true)"
+            echo ""
+            echo "### progress markers"
+            echo "- ApplicationOnCreate: $(grep -ac 'ApplicationOnCreate' logcat_checkpatch.txt || true)"
+            echo "- initIhumanSdk: $(grep -ac 'initIhumanSdk' logcat_checkpatch.txt || true)"
+            echo "- houdini/AES lines (should be 0 on redroid): $(grep -ac 'Expected CPU feature' logcat_checkpatch.txt || true)"
+            echo ""
+            echo "### crash lines"
+            grep -aE '0xdead|Fatal signal|SecurityJni|SIGSEGV|SIGBUS' logcat_checkpatch.txt | grep -av launcher3 | grep -av systemui | tail -40 || true
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "===== crash markers ====="
+          grep -aE "0xdead|Fatal signal" logcat_checkpatch.txt | grep -av launcher3 | grep -av systemui | tail -20 || true
+
+      - name: harvest tombstones
+        if: always()
+        run: |
+          sudo docker exec redroid /system/bin/sh -c 'ls -la /data/tombstones/ 2>/dev/null; ls -la /data/tombstones/app/com.ihuman.pinyin/ 2>/dev/null' > tombstones_list.txt 2>&1 || true
+          cat tombstones_list.txt || true
+          for f in $(sudo docker exec redroid /system/bin/sh -c 'ls /data/tombstones/*.pb /data/tombstones/[0-9]* 2>/dev/null' || true); do
+            echo "== $f" >> tombstones_all.txt
+            sudo docker exec redroid /system/bin/cat "$f" 2>/dev/null | strings | head -80 >> tombstones_all.txt || true
+          done
+          cat tombstones_all.txt 2>/dev/null | head -100 || true
+
+      - name: upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkpatch-out
+          path: |
+            build_checkpatch.log
+            logcat_checkpatch.txt
+            tombstones_list.txt
+            tombstones_all.txt
+          if-no-files-found: warn
+
+      - name: cleanup
+        if: always()
+        run: sudo docker rm -f redroid 2>/dev/null || true
