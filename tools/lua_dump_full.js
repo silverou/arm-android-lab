@@ -194,8 +194,9 @@ function armModule(m) {
 }
 
 var ARMED = 0;
+var armedAll = false;
 function armAll() {
-  if (!ok) return;
+  if (!ok || armedAll) return;
   var got = ARMED;
   // global exports first
   ['luaL_loadbuffer', 'luaL_loadbufferx', 'luaL_loadfile', 'luaL_loadfilex', 'luaL_loadstring', 'lua_load'].forEach(function (nm) {
@@ -205,25 +206,28 @@ function armAll() {
       if (attach(p, nm, kind)) got++;
     }
   });
-  // per-module symbol walk (static links)
-  try {
-    Process.enumerateModules().forEach(function (m) {
-      if (!/cocos|lua|ihuman/i.test(m.name)) return;
-      var syms;
-      try { syms = m.enumerateSymbols(); } catch (e) { return; }
-      syms.forEach(function (s) {
-        if (s.type !== 'function') return;
-        var nm = s.name || '';
-        if (/^luaL_loadbufferx?$/.test(nm)) { if (attach(s.address, m.name + '!' + nm, 'buf')) got++; }
-        else if (/^luaL_loadfilex?$/.test(nm)) { if (attach(s.address, m.name + '!' + nm, 'file')) got++; }
-        else if (nm === 'luaL_loadstring') { if (attach(s.address, m.name + '!' + nm, 'string')) got++; }
-        else if (nm === 'lua_load') { if (attach(s.address, m.name + '!' + nm, 'load')) got++; }
+  // per-module symbol walk (static links) — heavy; only until armed
+  if (got < 4) {
+    try {
+      Process.enumerateModules().forEach(function (m) {
+        if (!/cocos|lua|ihuman/i.test(m.name)) return;
+        var syms;
+        try { syms = m.enumerateSymbols(); } catch (e) { return; }
+        syms.forEach(function (s) {
+          if (s.type !== 'function') return;
+          var nm = s.name || '';
+          if (/^luaL_loadbufferx?$/.test(nm)) { if (attach(s.address, m.name + '!' + nm, 'buf')) got++; }
+          else if (/^luaL_loadfilex?$/.test(nm)) { if (attach(s.address, m.name + '!' + nm, 'file')) got++; }
+          else if (nm === 'luaL_loadstring') { if (attach(s.address, m.name + '!' + nm, 'string')) got++; }
+          else if (nm === 'lua_load') { if (attach(s.address, m.name + '!' + nm, 'load')) got++; }
+        });
       });
-    });
-  } catch (e) {}
+    } catch (e) {}
+  }
   if (got > ARMED) {
     ARMED = got;
     send({ ev: 'dump_armed', count: ARMED });
+    if (ARMED >= 4) armedAll = true;   // stop all further polling work
   }
 }
 
@@ -248,9 +252,9 @@ armAll();
 var tries = 0;
 var armTimer = setInterval(function () {
   tries++;
+  if (armedAll || tries > 40) { clearInterval(armTimer); return; }
   armAll();
-  if (ARMED >= 3 && tries > 200) clearInterval(armTimer);
-}, 50);
+}, 250);
 setInterval(function () {
   send({ ev: 'dump_stat', files: n, dup: dup, wfails: wfails, armed: ARMED });
 }, 10000);
