@@ -42,6 +42,7 @@ var ok = !!(fns.fopen && fns.fread && fns.fwrite && fns.fclose);
 send({ ev: 'dump_ready', ok: ok });
 
 var n = 0, dup = 0, wfails = 0;
+var calls = { buf: 0, file: 0, string: 0, load: 0 };
 var seen = {};
 var mapLines = [];
 
@@ -154,10 +155,11 @@ function attach(p, label, kind) {
   } else if (kind === 'load') {
     Interceptor.attach(p, {
       onEnter: function (a) {
+        calls.load++;
         try {
           var nm = '';
           try { nm = a[3].readCString(); } catch (e) {}
-          send({ ev: 'dump_lua_load', name: sanitize(nm) });
+          if (calls.load <= 20) send({ ev: 'dump_lua_load', name: sanitize(nm), t: Date.now() });
         } catch (e) {}
       }
     });
@@ -165,6 +167,7 @@ function attach(p, label, kind) {
     // loadbuffer / loadbufferx: (L, buff, sz, name)
     Interceptor.attach(p, {
       onEnter: function (a) {
+        calls.buf++;
         try {
           var size = a[2].toInt32();
           var name = '';
@@ -248,13 +251,24 @@ function armAll() {
   });
 });
 
+// The shell maps libcocos2dlua with its own loader (no libc dlopen), so
+// observer hooks never fire. Engine loads all scripts in one burst right
+// after the module appears — poll module presence every 10ms (cheap) and
+// arm the instant it shows up; stop the instant all hooks are in.
 armAll();
 var tries = 0;
 var armTimer = setInterval(function () {
   tries++;
-  if (armedAll || tries > 40) { clearInterval(armTimer); return; }
-  armAll();
-}, 250);
+  if (armedAll || tries > 6000) { clearInterval(armTimer); return; }
+  var c = null;
+  try {
+    Process.enumerateModules().forEach(function (x) {
+      if (!c && /libcocos2dlua/.test(x.name)) c = x;
+    });
+  } catch (e) {}
+  if (c) armAll();
+}, 10);
 setInterval(function () {
-  send({ ev: 'dump_stat', files: n, dup: dup, wfails: wfails, armed: ARMED });
-}, 10000);
+  send({ ev: 'dump_stat', files: n, dup: dup, wfails: wfails, armed: ARMED,
+         calls: calls, t: Date.now() });
+}, 5000);
