@@ -622,7 +622,7 @@ jobs:
           ls -la sodump_out | head -12 || true
           ls -la dexdump_out | head -12 || true
           echo "--- v177 lua script dump pull ---"
-          sudo docker exec redroid /system/bin/sh -c 'cd /data/user/0/com.ihuman.pinyin/files && tar czf /tmp/luadump.tgz luadump_*.lua luadump_map.txt 2>/dev/null; ls -la /tmp/luadump.tgz' || true
+          sudo docker exec redroid /system/bin/sh -c 'cd /data/user/0/com.ihuman.pinyin/files && ls -la luadump_* xxtea_key.txt 2>/dev/null | head -30; find . -maxdepth 1 -name "luadump_*" -o -maxdepth 1 -name "xxtea_key.txt" | sed "s|^./||" > /tmp/ldlist; if [ -s /tmp/ldlist ]; then tar czf /tmp/luadump.tgz -T /tmp/ldlist; else tar czf /tmp/luadump.tgz --files-from /dev/null; fi; ls -la /tmp/luadump.tgz' || true
           sudo docker exec redroid /system/bin/cat /tmp/luadump.tgz > luadump.tgz 2>/dev/null || true
           ls -la luadump.tgz || true
 
