@@ -67,7 +67,8 @@ var CODE = [
   '  if type(v) == "table" then walk(v, 1, tostring(name)) end',
   '  if type(v) == "function" then push(tostring(name), v) end',
   'end',
-  'local f, err = io.open("/data/user/0/com.ihuman.pinyin/files/luabyte_dump.bin", "wb")',
+  'local path = "/data/user/0/com.ihuman.pinyin/files/luabyte_dump_" .. tostring(APP_PID) .. ".bin"',
+  'local f, err = io.open(path, "wb")',
   'if not f then return "NO_IO:" .. tostring(err) end',
   'local total = 0',
   'for i = 1, #out, 2 do',
@@ -79,8 +80,34 @@ var CODE = [
   '  total = total + #code',
   'end',
   'f:close()',
-  'return "OK count=" .. tostring(count) .. " bytes=" .. tostring(total)'
-].join('\n');
+  '-- roundtrip: feed a sample back through the engine undump',
+  'local rf = io.open(path, "rb")',
+  'local checks, pass = 0, 0',
+  'if rf then',
+  '  local data = rf:read("*a")',
+  '  rf:close()',
+  '  local pos = 1',
+  '  local idx = 0',
+  '  while pos + 8 <= #data do',
+  '    local nl = tonumber(data:sub(pos, pos+7), 16)',
+  '    pos = pos + 8',
+  '    local nm = data:sub(pos, pos+nl-1)',
+  '    pos = pos + nl',
+  '    local cl = tonumber(data:sub(pos, pos+7), 16)',
+  '    pos = pos + 8',
+  '    local code = data:sub(pos, pos+cl-1)',
+  '    pos = pos + cl',
+  '    idx = idx + 1',
+  '    if idx % 500 == 1 then',
+  '      checks = checks + 1',
+  '      local okr, r = pcall(loadstring, code)',
+  '      if okr and r then pass = pass + 1 end',
+  '    end',
+  '  end',
+  'end',
+  'return "OK count=" .. tostring(count) .. " bytes=" .. tostring(total) ..',
+  '       " roundtrip=" .. tostring(pass) .. "/" .. tostring(checks)'
+].join('\n').replace('APP_PID', String(Process.id));
 
 var lastAttempt = 0;
 function runInject() {
