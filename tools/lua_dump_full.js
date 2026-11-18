@@ -28,7 +28,7 @@ function resolveGlobal(name) {
   var p = resolveGlobal(n);
   if (p) {
     var sig = {
-      fopen: ['pointer', 'pointer'],
+      fopen: ['pointer', 'pointer', 'pointer'],
       fread: ['size_t', 'pointer', 'size_t', 'size_t', 'pointer'],
       fwrite: ['size_t', 'pointer', 'size_t', 'size_t', 'pointer'],
       fclose: ['int', 'pointer'],
@@ -249,8 +249,8 @@ var tries = 0;
 var armTimer = setInterval(function () {
   tries++;
   armAll();
-  if (ARMED >= 3 && tries > 40) clearInterval(armTimer);
-}, 300);
+  if (ARMED >= 3 && tries > 200) clearInterval(armTimer);
+}, 50);
 setInterval(function () {
   send({ ev: 'dump_stat', files: n, dup: dup, wfails: wfails, armed: ARMED });
 }, 10000);
