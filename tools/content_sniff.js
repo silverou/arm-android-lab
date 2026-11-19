@@ -1,22 +1,13 @@
 'use strict';
 /*
- * Sniffer v11: hook the .ihi loader entry (libcocos2dlua RVA 0x1492bdc)
- * to capture its CALLER via LR (x30) — static scan found no direct bl
- * callers, so it is reached via indirect/virtual dispatch (blr).
- *
- * Also hook helper 0x1498374 (called with the path Data before return).
- * Emits module+RVA of caller for offline disassembly.
+ * Sniffer v12: poll for libcocos2dlua, then hook loader entry RVA 0x1492bdc
+ * (+ helper 0x1498374, consume 0x1492df0) to capture the CALLER via LR.
+ * v11 raced module load (sniff_no_module). Wait until module + code decrypted.
  */
 var seen = {};
 var lanes = [];
 var errs = [];
 var MODRE = /libcocos2dlua/;
-
-function hex(b) {
-  var s = '';
-  for (var i = 0; i < b.length; i++) s += ('0' + b[i].toString(16)).slice(-2);
-  return s;
-}
 
 function describe(addr) {
   var s = addr.toString();
@@ -37,45 +28,54 @@ function findMod() {
   return m;
 }
 
-function hookEntry(name, rva, max) {
-  var m = findMod();
-  if (!m) { send({ ev: 'sniff_no_module', name: name }); return false; }
+function hookEntry(m, name, rva) {
   var addr = m.base.add(rva);
   try {
     Interceptor.attach(addr, {
       onEnter: function (a) {
-        var key = name + '|' + (this.returnAddress ? this.returnAddress.toString() : '?');
-        if (seen[key]) return;
-        seen[key] = 1;
-        var o = { ev: 'sniff_entry', name: name, at: describe(addr),
-                  caller: describe(this.returnAddress),
-                  x0: a[0].toString(), x1: a[1].toString(),
-                  x2: a[2].toString(), x8: a[8].toString(),
-                  t: Date.now() };
-        try { o.lr = describe(this.context.lr); } catch (e) {}
-        try { o.pc = describe(this.context.pc); } catch (e) {}
-        // x1 often a std::string/Data: try read printable
-        try {
-          var s = a[1].readCString();
-          if (s && /^[\x20-\x7e\/\.]{3,140}$/.test(s)) o.str1 = s;
-        } catch (e) {}
+        var caller = '?';
+        try { caller = describe(this.returnAddress); } catch (e) {}
+        var key = name + '|' + caller;
+        var o = { ev: 'sniff_entry', name: name, at: describe(addr), caller: caller,
+                  x0: a[0].toString(), x1: a[1].toString(), t: Date.now() };
+        try { o.str1 = a[1].readCString(); } catch (e) {}
+        if (seen[key] >= 3) return;
+        seen[key] = (seen[key] || 0) + 1;
         send(o);
       }
     });
     lanes.push(name);
-    return true;
   } catch (e) {
     errs.push(name + ':' + e);
     send({ ev: 'sniff_attach_err', name: name, e: String(e) });
-    return false;
   }
 }
 
-hookEntry('loader', 0x1492bdc);
-hookEntry('helper1498374', 0x1498374);
-hookEntry('openPath1492df0', 0x1492df0);
-
-send({ ev: 'sniff_armed10', lanes: lanes, errs: errs });
+var tries = 0;
+var poll = setInterval(function () {
+  tries++;
+  var m = findMod();
+  if (m) {
+    clearInterval(poll);
+    // wait for packer to decrypt the hidden .text
+    setTimeout(function () {
+      // sanity: head of loader should be non-zero code
+      try {
+        var head = new Uint8Array(m.base.add(0x1492bdc).readByteArray(8));
+        var hx = '';
+        for (var i = 0; i < head.length; i++) hx += ('0' + head[i].toString(16)).slice(-2);
+        send({ ev: 'sniff_loader_head', head: hx });
+      } catch (e) { send({ ev: 'sniff_head_err', e: String(e) }); }
+      hookEntry(m, 'loader', 0x1492bdc);
+      hookEntry(m, 'helper1498374', 0x1498374);
+      hookEntry(m, 'consume1492df0', 0x1492df0);
+      send({ ev: 'sniff_armed11', lanes: lanes, errs: errs, after_ms: tries * 100 });
+    }, 6000);
+  } else if (tries > 300) {
+    clearInterval(poll);
+    send({ ev: 'sniff_timeout' });
+  }
+}, 100);
 
 setInterval(function () {
   send({ ev: 'sniff_stat', seen: Object.keys(seen).length, lanes: lanes.length, errs: errs.length });
