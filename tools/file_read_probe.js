@@ -46,28 +46,33 @@ function hex(b, n) {
   return s;
 }
 
-// --- fopen64: record FILE* -> path (only .ihi to keep map small)
+// --- fopen64 + fopen: record FILE* -> path (bionic keeps both symbols;
+// engine may call either — bridge's FOPEN logger attaches `fopen` only)
 var fopen64 = null;
 try { fopen64 = Module.getGlobalExportByName('fopen64'); } catch (e) {}
-if (!fopen64) {
-  try { fopen64 = Module.getGlobalExportByName('fopen'); } catch (e) {}
-}
-if (fopen64) {
-  Interceptor.attach(fopen64, {
+var fopenPlain = null;
+try { fopenPlain = Module.getGlobalExportByName('fopen'); } catch (e) {}
+function attachOpen(p, label) {
+  if (!p) { send({ ev: 'rd_miss', sym: label }); return; }
+  Interceptor.attach(p, {
     onEnter: function (a) {
       try { this.path = a[0].readCString(); } catch (e) { this.path = ''; }
+      if (this.path && /\.ihi$/.test(this.path)) {
+        send({ ev: 'rd_open_enter', via: label, p: this.path.slice(0, 130) });
+      }
     },
     onLeave: function (ret) {
       if (!ret.isNull() && this.path && /\.ihi$/.test(this.path)) {
         fileMap[ret.toString()] = this.path;
         openN++;
-        send({ ev: 'rd_open', p: this.path.slice(0, 130), fp: ret.toString() });
+        send({ ev: 'rd_open', via: label, p: this.path.slice(0, 130), fp: ret.toString() });
       }
     }
   });
-} else {
-  send({ ev: 'rd_miss', sym: 'fopen64' });
 }
+attachOpen(fopen64, 'fopen64');
+attachOpen(fopenPlain, 'fopen');
+send({ ev: 'rd_openlanes', f64: !!fopen64, f: !!fopenPlain });
 
 // --- fclose: drop mapping
 var fclose = null;
@@ -160,16 +165,17 @@ var assetPoll = setInterval(function () {
 var fdMap = {};
 var fileno = null;
 try { fileno = new NativeFunction(Module.getGlobalExportByName('fileno'), 'int', ['pointer']); } catch (e) {}
-if (fopen64 && fileno) {
-  var origOnLeave = null;
-  // re-attach wrapper: we already attached above; add fd capture via second attach on same fn
-  Interceptor.attach(fopen64, {
-    onEnter: function (a) { try { this.path = a[0].readCString(); } catch (e) { this.path = ''; } },
-    onLeave: function (ret) {
-      if (!ret.isNull() && this.path && /\.ihi$/.test(this.path)) {
-        try { fdMap[fileno(ret)] = this.path; } catch (e) {}
+if (fileno) {
+  [fopen64, fopenPlain].forEach(function (fp) {
+    if (!fp) return;
+    Interceptor.attach(fp, {
+      onEnter: function (a) { try { this.path = a[0].readCString(); } catch (e) { this.path = ''; } },
+      onLeave: function (ret) {
+        if (!ret.isNull() && this.path && /\.ihi$/.test(this.path)) {
+          try { fdMap[fileno(ret)] = this.path; } catch (e) {}
+        }
       }
-    }
+    });
   });
 }
 ['open', 'openat', 'open64', 'openat64'].forEach(function (sym) {
