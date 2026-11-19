@@ -113,6 +113,24 @@ function captureFd(fd, kind) {
       log({ ev: 'cap', k: 'cmdline', v: s }, 'cap|cmdline');
       return;
     }
+    if (kind === 'ihi') {
+      // binary head of an .ihi the engine just opened (format detection)
+      var r1 = preadF(fd, buf, 64, 0);
+      if (r1 <= 0) { log({ ev: 'cap', k: 'ihi', err: Number(r1) }, 'cap|ihi|err'); return; }
+      var b1 = new Uint8Array(buf.readByteArray(Number(r1)));
+      var hx = '';
+      for (var hi = 0; hi < b1.length; hi++) hx += ('0' + b1[hi].toString(16)).slice(-2);
+      var r2 = preadF(fd, buf, 512, 0);
+      var txt = r2 > 0 ? buf.readUtf8String(Number(r2)) : '';
+      var printable = true;
+      for (var pi = 0; pi < txt.length && pi < 40; pi++) {
+        var cc = txt.charCodeAt(pi);
+        if (cc < 9 || (cc > 13 && cc < 32)) { printable = false; break; }
+      }
+      log({ ev: 'cap', k: 'ihi', n: Number(r1), head: hx,
+            text: printable ? txt.slice(0, 300) : null }, 'cap|ihi|' + hx.slice(0, 16));
+      return;
+    }
     var out = '';
     var off = 0;
     for (var c = 0; c < 8; c++) {
@@ -143,6 +161,7 @@ var CAP_PATHS = { '/proc/self/maps': 'maps', '/proc/self/cmdline': 'cmdline' };
 
 function capKind(p) {
   if (CAP_PATHS[p]) return CAP_PATHS[p];
+  if (/\.ihi$/.test(p)) return 'ihi';
   if (p === '/proc/self/status') return 'realst';
   if (p === '/proc/self/stat') return 'realstf';
   if (/\/cache\/self_status\.txt$/.test(p)) return 'selfst';
