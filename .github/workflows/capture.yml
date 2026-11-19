@@ -195,7 +195,7 @@ jobs:
           tools/gx.sh "pm path com.ihuman.pinyin"
 
       - name: override test (plain-lua main.ihi swap)
-        if: inputs.override_test == 'true'
+        if: ${{ inputs.override_test }}
         run: |
           set -x
           echo "--- warm run to materialize files/ dir ---"
