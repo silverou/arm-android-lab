@@ -702,6 +702,21 @@ jobs:
           grep -aE "0xdead|Fatal signal" logcat_frida.txt | grep -av launcher3 | grep -av systemui | tail -10 || true
           grep -a "XXTEA_KEY" hook_out.txt | head -3 || true
 
+      - name: override proof (after bridged attempts)
+        if: ${{ inputs.override_test }}
+        run: |
+          echo "=== override proof file ==="
+          tools/gx.sh "cat /data/user/0/com.ihuman.pinyin/files/override_proof.txt" 2>/dev/null || echo "(missing)"
+          echo "=== plant marker ==="
+          tools/gx.sh "cat /data/user/0/com.ihuman.pinyin/files/plant_marker.txt" 2>/dev/null || echo "(missing)"
+          echo "=== current main.ihi on disk (head hex) ==="
+          tools/gx.sh "ls -la /data/user/0/com.ihuman.pinyin/files/asset/src/launcher/" || true
+          tools/gx.sh "xxd /data/user/0/com.ihuman.pinyin/files/asset/src/launcher/main.ihi 2>/dev/null | head -4" || true
+          echo "=== markers in logcat ==="
+          tools/gx.sh "logcat -d -v time" 2>/dev/null | grep -aiE "SZAQ_OVERRIDE_OK|OVERRIDE_MAIN_OK|override" | head -12 || true
+          echo "=== plant events already in hook_out ==="
+          grep -aE "plant_out|plant_err|plant_state|plant_armed|plant_giveup" hook_out.txt hook_out2.txt 2>/dev/null | head -20 || true
+
       - name: upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
