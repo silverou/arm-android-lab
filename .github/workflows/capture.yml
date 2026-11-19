@@ -25,6 +25,10 @@ on:
         description: "extra frida bundles for att1/att2 (comma list): xxtea_key.js,dex_probe.js,so_dump.js"
         type: string
         default: ""
+      override_test:
+        description: "write a plain-Lua main.ihi into files/asset/src/launcher and relaunch (entry-swap feasibility)"
+        type: boolean
+        default: false
 
 jobs:
   capture:
@@ -189,6 +193,49 @@ jobs:
           echo "$out"
           echo "$out" | grep -a Success
           tools/gx.sh "pm path com.ihuman.pinyin"
+
+      - name: override test (plain-lua main.ihi swap)
+        if: inputs.override_test == 'true'
+        run: |
+          set -x
+          echo "--- warm run to materialize files/ dir ---"
+          tools/gx.sh "input keyevent 224" || true
+          tools/gx.sh "wm dismiss-keyguard" || true
+          tools/gx.sh "am start -n com.ihuman.pinyin/org.cocos2dx.lua.AppActivity" || true
+          sleep 10
+          tools/gx.sh "am force-stop com.ihuman.pinyin" || true
+          sleep 2
+          echo "--- list existing files tree (what does the app read from app-private dir) ---"
+          sudo docker exec redroid /system/bin/sh -c 'ls -laR /data/user/0/com.ihuman.pinyin/files 2>/dev/null | head -60' || true
+          echo "--- write plain-lua override main.ihi ---"
+          mkdir -p ov
+          cat > ov/main.lua <<'OVEOF'
+          print("OVERRIDE_MAIN_OK v1")
+          local p = "/data/user/0/com.ihuman.pinyin/files/override_proof.txt"
+          local f = io.open(p, "w")
+          if f then f:write("override-ok"); f:close() end
+          return "override-ok"
+          OVEOF
+          sudo docker cp ov/main.lua redroid:/data/local/tmp/override_main.lua
+          UID_APP=$(tools/gx.sh "stat -c %u /data/user/0/com.ihuman.pinyin" 2>/dev/null | tr -d '[:space:]')
+          echo "app uid: $UID_APP"
+          tools/gx.sh "mkdir -p /data/user/0/com.ihuman.pinyin/files/asset/src/launcher"
+          tools/gx.sh "cp /data/local/tmp/override_main.lua /data/user/0/com.ihuman.pinyin/files/asset/src/launcher/main.ihi"
+          tools/gx.sh "chown -R $UID_APP:$UID_APP /data/user/0/com.ihuman.pinyin/files/asset"
+          tools/gx.sh "ls -la /data/user/0/com.ihuman.pinyin/files/asset/src/launcher/ && head -c 200 /data/user/0/com.ihuman.pinyin/files/asset/src/launcher/main.ihi"
+          echo "--- relaunch and watch ---"
+          tools/gx.sh "logcat -c" || true
+          tools/gx.sh "am start -n com.ihuman.pinyin/org.cocos2dx.lua.AppActivity" || true
+          sleep 20
+          echo "=== override markers in logcat ==="
+          tools/gx.sh "logcat -d -v time" 2>/dev/null | grep -aiE "OVERRIDE|override_proof" | head -10 || true
+          echo "=== proof file ==="
+          tools/gx.sh "cat /data/user/0/com.ihuman.pinyin/files/override_proof.txt" || true
+          echo "=== last lua-related logcat ==="
+          tools/gx.sh "logcat -d -v time" 2>/dev/null | grep -aiE "lua|script|ihi" | tail -25 || true
+          echo "=== liveness ==="
+          tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
+          tools/gx.sh "logcat -d -v time" > logcat_override.txt 2>/dev/null || true
 
       - name: plain launch probe
         run: |
@@ -662,6 +709,7 @@ jobs:
           name: capture-out
           path: |
             build_checkpatch.log
+            logcat_override.txt
             xxtea_key.txt
             sodump_out
             dexdump_out
