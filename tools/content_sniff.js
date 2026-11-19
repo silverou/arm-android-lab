@@ -1,12 +1,15 @@
 'use strict';
 /*
- * Content sniffer v7: self-checking fopen/fd tracker.
+ * Content sniffer v8: only .ihi fds + exact classify (no first-byte spam).
  *
- * v6 failed silently (sniff_fopen=0 while bridge FOPEN saw main.ihi).
- * This version:
- *   - counts EVERY fopen enter (first 30 paths) to prove the hook lives
- *   - tracks open/openat fd for *.ihi (trace already proved open r=205 works)
- *   - force-reports read/pread/fread on those fds (content + backtrace)
+ * v7 lesson: loose b0 prefilter burned the 40-hit cap on oat/dex noise
+ * (kind=other), capture ended before main.ihi opened.
+ * Rules:
+ *   - open/openat: map fd for paths ending .ihi (always)
+ *   - read/pread/fread: report ONLY if fd is a known .ihi fd
+ *     OR content classify hits exactly (plain/szaq/ihi42/json)
+ *   - fopen: count all + flag .ihi (prove hook sees engine path)
+ *   - never report kind=other from content path
  */
 var seen = {};
 var hits = 0;
@@ -50,19 +53,17 @@ function tryAttach(name, fn) {
   }
 }
 
-// --- fopen: count all + special-case .ihi
 tryAttach('fopen', function () {
   var p = Module.getGlobalExportByName('fopen');
   Interceptor.attach(p, {
     onEnter: function (a) {
       fopenN++;
       try { this.path = a[0].readCString(); } catch (e) { this.path = '?'; }
-      if (fopenN <= 30) {
-        send({ ev: 'sniff_fopen_any', n: fopenN, p: (this.path || '').slice(0, 140) });
-      }
       if (this.path && /\.ihi$/.test(this.path)) {
-        send({ ev: 'sniff_fopen_ihi', p: this.path.slice(0, 140) });
+        send({ ev: 'sniff_fopen_ihi', n: fopenN, p: this.path.slice(0, 140) });
         this.ihi = 1;
+      } else if (fopenN <= 5) {
+        send({ ev: 'sniff_fopen_any', n: fopenN, p: (this.path || '').slice(0, 100) });
       }
     },
     onLeave: function (ret) {
@@ -74,7 +75,6 @@ tryAttach('fopen', function () {
   });
 });
 
-// --- open family: fd map for .ihi
 ['open', 'open64', 'openat', 'openat64'].forEach(function (sym) {
   tryAttach('open:' + sym, function () {
     var p = Module.getGlobalExportByName(sym);
@@ -111,21 +111,17 @@ tryAttach('close', function () {
   });
 });
 
-function forceRead(fd, buf, got, via) {
-  if (hits > 40 || got < 1) return;
+function maybeReport(fd, buf, got, via) {
+  if (hits >= 30 || got < 4) return;
   var force = !!ihiFd[fd];
-  if (!force) {
-    // content classify fallback
-    if (got < 4) return;
-    try {
-      var b0 = buf.readU8();
-      if (b0 !== 0x70 && b0 !== 0x1b && b0 !== 0x34 && b0 !== 0x7b) return;
-    } catch (e) { return; }
-  }
+  var kind = null;
   try {
     var n = Math.min(got, 48);
     var b = new Uint8Array(buf.readByteArray(n));
     var h = hex(b);
+    kind = classify(h);
+    if (!force && !kind) return;          // exact match only
+    if (force && !kind) kind = 'other';   // known ihi fd, content unknown
     var key = (force ? 'F' : 'C') + via + '|' + h.slice(0, 16);
     if (seen[key]) return;
     seen[key] = 1;
@@ -135,8 +131,9 @@ function forceRead(fd, buf, got, via) {
       var frames = Thread.backtrace(this.context, Backtracer.ACCURATE);
       for (var i = 0; i < Math.min(frames.length, 8); i++) bt.push(describe(frames[i]));
     } catch (e) {}
-    send({ ev: 'sniff', kind: classify(h) || 'other', via: via, force: force,
-           fd: fd, got: got, head: h, p: ihiFd[fd] ? ihiFd[fd].slice(0, 140) : null,
+    send({ ev: 'sniff', kind: kind, via: via, force: force,
+           fd: fd, got: got, head: h,
+           p: ihiFd[fd] ? ihiFd[fd].slice(0, 140) : null,
            bt: bt, t: Date.now() });
   } catch (e) {}
 }
@@ -150,7 +147,7 @@ function forceRead(fd, buf, got, via) {
         this.buf = a[1];
       },
       onLeave: function (ret) {
-        forceRead.call(this, this.fd, this.buf, ret.toInt32(), sym);
+        maybeReport.call(this, this.fd, this.buf, ret.toInt32(), sym);
       }
     });
   });
@@ -171,12 +168,12 @@ tryAttach('fread', function () {
     onLeave: function (ret) {
       var items = ret.toInt32();
       var got = items > 0 ? items * (this.sz || 1) : 0;
-      forceRead.call(this, this.fd, this.buf, got, 'fread');
+      maybeReport.call(this, this.fd, this.buf, got, 'fread');
     }
   });
 });
 
-send({ ev: 'sniff_armed5', lanes: lanes, errs: errs });
+send({ ev: 'sniff_armed6', lanes: lanes, errs: errs });
 
 setInterval(function () {
   send({ ev: 'sniff_stat', hits: hits, fopenN: fopenN, opens: openN,
