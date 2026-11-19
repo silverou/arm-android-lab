@@ -1,34 +1,44 @@
 'use strict';
 /*
- * Sniffer v13: libc fopen hook (always armed) -> one-shot at returnAddress.
- * At the loader's fopen return (RVA 0x1492d98) capture x0=FILE*, fileno,
- * AND Thread.backtrace so we see who called the loader function.
- * v10 proved: existence-check fopen (ret 0x1492434, no read, closes)
- * then loader fopen (ret 0x1492d98) freads FULL file (192B plain) via
- * libcocos2dlua+0x1492df0, then process dies ~42ms later.
+ * Sniffer v14: live code capture around the .ihi loader.
+ *
+ * Facts: loader fn @ libcocos2dlua+0x1492bdc; its fopen returns to 0x1492d98;
+ * fread @ 0x1492df0 reads full file; caller (bt) = libcocos2dlua+0x1492490 —
+ * but bss_code.bin (offline dump) shows non-code there (stale/encrypted page).
+ * So dump the LIVE window at runtime and also hook the loader entry, arming
+ * it as soon as the first .ihi fopen is observed (module is loaded by then).
+ *
+ * Outputs: files/loader_win_<k>.bin (0x800 bytes each)
  */
-var seen = {};
-var retHooks = {};
+var DIR = '/data/user/0/com.ihuman.pinyin/files/';
+var MODRE = /libcocos2dlua/;
+var armedLoader = false;
+var armedRet = {};
+var winN = 0;
 var fpMap = {};
 var fdMap = {};
-var readCount = {};
 var enterIhi = 0;
-var lanes = [];
-var errs = [];
 
-function hex(b) {
-  var s = '';
-  for (var i = 0; i < b.length; i++) s += ('0' + b[i].toString(16)).slice(-2);
-  return s;
-}
+var fns = {};
+['fopen', 'fwrite', 'fclose'].forEach(function (n) {
+  var p = null;
+  try { p = Module.getGlobalExportByName(n); } catch (e) {}
+  if (p) fns[n] = new NativeFunction(p,
+    n === 'fwrite' ? 'size_t' : (n === 'fclose' ? 'int' : 'pointer'),
+    n === 'fwrite' ? ['pointer', 'size_t', 'size_t', 'pointer'] :
+    n === 'fclose' ? ['pointer'] : ['pointer', 'pointer']);
+});
+var ok = !!(fns.fopen && fns.fwrite && fns.fclose);
 
-function classify(head) {
-  if (head.length >= 8 && head.slice(0, 8) === '7072696e74') return 'plain';
-  if (head.length >= 8 && head.slice(0, 8) === '1b535a41') return 'szaq';
-  if (head.length >= 16 && head.slice(0, 16) === '3432613634313636') return 'ihi42';
-  if (head.length >= 4 && head.slice(0, 4) === '7b0d0a20') return 'json';
-  if (head.length >= 4 && head.slice(0, 4) === '7b226275') return 'json2';
-  return null;
+function writeFile(path, bytes, len) {
+  if (!ok) return false;
+  var fp = fns.fopen(Memory.allocUtf8String(path), Memory.allocUtf8String('wb'));
+  if (fp.isNull()) return false;
+  var buf = Memory.alloc(len);
+  buf.writeByteArray(bytes);
+  fns.fwrite(buf, 1, len, fp);
+  fns.fclose(fp);
+  return true;
 }
 
 function describe(addr) {
@@ -40,173 +50,193 @@ function describe(addr) {
   return s;
 }
 
-function tryAttach(name, fn) {
-  try { fn(); lanes.push(name); }
-  catch (e) { errs.push(name + ':' + e); send({ ev: 'sniff_attach_err', name: name, e: String(e) }); }
+function findMod() {
+  var m = null;
+  try {
+    Process.enumerateModules().forEach(function (x) {
+      if (!m && MODRE.test(x.name)) m = x;
+    });
+  } catch (e) {}
+  return m;
 }
 
-function armReturnCapture(path, via) {
-  var retAddr = null;
-  try { retAddr = this.returnAddress; } catch (e) {}
-  if (!retAddr) { send({ ev: 'sniff_retmiss', via: via }); return; }
-  var key = retAddr.toString();
-  if (retHooks[key]) {
-    // already hooked (existence-check and loader share nothing, so this is safe)
-    send({ ev: 'sniff_retarm_dup', at: describe(retAddr), via: via });
-    return;
-  }
-  retHooks[key] = 1;
+function dumpWindow(m, rva, label) {
   try {
-    Interceptor.attach(retAddr, {
-      onEnter: function () {
-        var fp = null;
-        try { fp = this.context.x0; } catch (e) {}
-        if (!fp || fp.isNull()) { send({ ev: 'sniff_retfail', at: describe(retAddr), via: via }); return; }
-        var fpk = fp.toString();
-        fpMap[fpk] = path;
-        var fd = -1;
-        try {
-          var fileno = new NativeFunction(Module.getGlobalExportByName('fileno'), 'int', ['pointer']);
-          fd = fileno(fp);
-        } catch (e) {}
-        if (fd >= 0) fdMap[fd] = path;
+    var n = 0x800;
+    var bytes = new Uint8Array(m.base.add(rva).readByteArray(n));
+    winN++;
+    var path = DIR + 'loader_win_' + winN + '_' + label + '_' + rva.toString(16) + '.bin';
+    var wrote = writeFile(path, bytes, n);
+    send({ ev: 'dumpwin', label: label, rva: '0x' + rva.toString(16), n: n, wrote: wrote });
+  } catch (e) {
+    send({ ev: 'dumpwin_err', label: label, e: String(e) });
+  }
+}
+
+function frameWalk(ctx) {
+  var out = [];
+  try {
+    var fp = ctx.fp;
+    for (var i = 0; i < 6; i++) {
+      if (fp.isNull()) break;
+      var next = fp.readPointer();
+      var lr = fp.add(8).readPointer();
+      out.push(describe(lr));
+      if (next.compare(fp) <= 0) break;
+      fp = next;
+    }
+  } catch (e) { out.push('walk_err:' + e); }
+  return out;
+}
+
+function armLoader(m) {
+  if (armedLoader) return;
+  armedLoader = true;
+  try {
+    Interceptor.attach(m.base.add(0x1492bdc), {
+      onEnter: function (a) {
         var bt = [];
         try {
           var frames = Thread.backtrace(this.context, Backtracer.ACCURATE);
           for (var i = 0; i < Math.min(frames.length, 10); i++) bt.push(describe(frames[i]));
         } catch (e) {}
-        send({ ev: 'sniff_ret', p: path.slice(0, 140), via: via, fp: fpk, fd: fd,
-               at: describe(retAddr), bt: bt, t: Date.now() });
+        send({ ev: 'loader_enter', x0: a[0].toString(), x1: a[1].toString(),
+               ret: describe(this.returnAddress), bt: bt, fpw: frameWalk(this.context) });
+        dumpWindow(m, 0x1492400, 'caller');
+        dumpWindow(m, 0x1492b00, 'loader');
       }
     });
-    send({ ev: 'sniff_retarm', p: path.slice(0, 100), via: via, at: describe(retAddr) });
+    // success-path ret: capture the Data{ptr,size} handed back to caller
+    Interceptor.attach(m.base.add(0x1492e40), {
+      onEnter: function () {
+        var o = { ev: 'loader_ret', t: Date.now() };
+        try { o.x0 = this.context.x0.toString(); } catch (e) {}
+        try { o.x1 = this.context.x1.toString(); } catch (e) {}
+        try { o.x19 = this.context.x19.toString(); } catch (e) {}
+        try {
+          var d = this.context.x0;
+          if (d && !d.isNull()) {
+            o.dptr = d.readPointer().toString();
+            o.dsize = d.add(8).readPointer().toString();
+            var sz = d.add(8).readPointer().toInt32();
+            if (sz > 0 && sz < 65536) {
+              var head = new Uint8Array(d.readPointer().readByteArray(Math.min(sz, 16)));
+              var h = '';
+              for (var i = 0; i < head.length; i++) h += ('0' + head[i].toString(16)).slice(-2);
+              o.dhead = h;
+            }
+          }
+        } catch (e) {}
+        send(o);
+        dumpWindow(m, 0x1492400, 'ret');
+      }
+    });
+    send({ ev: 'loader_armed' });
   } catch (e) {
-    send({ ev: 'sniff_retarm_err', e: String(e), at: describe(retAddr) });
+    send({ ev: 'loader_arm_err', e: String(e) });
   }
 }
 
 ['fopen', 'fopen64'].forEach(function (sym) {
-  tryAttach(sym, function () {
-    var p = Module.getGlobalExportByName(sym);
-    Interceptor.attach(p, {
-      onEnter: function (a) {
-        var path = '';
-        try { path = a[0].readCString(); } catch (e) {}
-        if (!path || !/\.ihi$/.test(path)) return;
-        enterIhi++;
-        send({ ev: 'sniff_fopen_ihi', via: sym, n: enterIhi, p: path.slice(0, 140),
-               ret: describe(this.returnAddress) });
-        armReturnCapture.call(this, path, sym);
-      }
-    });
-  });
-});
-
-// open family (for completeness)
-['open', 'open64', 'openat', 'openat64'].forEach(function (sym) {
-  tryAttach(sym, function () {
-    var p = Module.getGlobalExportByName(sym);
-    var pi = (sym.indexOf('at') >= 0) ? 1 : 0;
-    Interceptor.attach(p, {
-      onEnter: function (a) {
-        try { this.path = a[pi].readCString(); } catch (e) { this.path = ''; }
-      },
-      onLeave: function (ret) {
-        if (!this.path || !/\.ihi$/.test(this.path)) return;
-        var fd = ret.toInt32();
-        if (fd >= 0) { fdMap[fd] = this.path; send({ ev: 'sniff_open_ihi', sym: sym, fd: fd, p: this.path.slice(0, 140) }); }
-      }
-    });
-  });
-});
-
-tryAttach('close', function () {
-  var p = Module.getGlobalExportByName('close');
+  var p = null;
+  try { p = Module.getGlobalExportByName(sym); } catch (e) {}
+  if (!p) return;
   Interceptor.attach(p, {
     onEnter: function (a) {
-      var fd = a[0].toInt32();
-      if (fdMap[fd]) {
-        send({ ev: 'sniff_close_ihi', fd: fd, p: fdMap[fd].slice(0, 140), reads: readCount[fdMap[fd]] || 0 });
-        delete fdMap[fd];
-      }
+      var path = '';
+      try { path = a[0].readCString(); } catch (e) {}
+      if (!path || !/\.ihi$/.test(path)) return;
+      enterIhi++;
+      send({ ev: 'fopen_ihi', via: sym, n: enterIhi, p: path.slice(0, 140),
+             ret: describe(this.returnAddress) });
+      var m = findMod();
+      if (m && !armedLoader) armLoader(m);
+      // one-shot at return address
+      var retAddr = null;
+      try { retAddr = this.returnAddress; } catch (e) {}
+      if (!retAddr) return;
+      var key = retAddr.toString();
+      if (armedRet[key]) return;
+      armedRet[key] = 1;
+      try {
+        Interceptor.attach(retAddr, {
+          onEnter: function () {
+            var fp = null;
+            try { fp = this.context.x0; } catch (e) {}
+            if (!fp || fp.isNull()) return;
+            var fpk = fp.toString();
+            fpMap[fpk] = path;
+            var fd = -1;
+            try {
+              var fileno = new NativeFunction(Module.getGlobalExportByName('fileno'), 'int', ['pointer']);
+              fd = fileno(fp);
+            } catch (e) {}
+            if (fd >= 0) fdMap[fd] = path;
+            var bt = [];
+            try {
+              var frames = Thread.backtrace(this.context, Backtracer.ACCURATE);
+              for (var i = 0; i < Math.min(frames.length, 10); i++) bt.push(describe(frames[i]));
+            } catch (e) {}
+            send({ ev: 'ret_cap', at: describe(retAddr), fp: fpk, fd: fd,
+                   bt: bt, fpw: frameWalk(this.context) });
+          }
+        });
+      } catch (e) { send({ ev: 'ret_arm_err', e: String(e) }); }
     }
   });
 });
-tryAttach('fclose', function () {
-  var p = Module.getGlobalExportByName('fclose');
-  Interceptor.attach(p, {
-    onEnter: function (a) {
-      var k = a[0].toString();
-      if (fpMap[k]) {
-        send({ ev: 'sniff_fclose_ihi', p: fpMap[k].slice(0, 140), fp: k, reads: readCount[fpMap[k]] || 0 });
-        delete fpMap[k];
-      }
-    }
-  });
-});
-
-function maybeReport(fd, fpKey, buf, got, via) {
-  if (got < 4) return;
-  var path = null;
-  if (fd >= 0 && fdMap[fd]) path = fdMap[fd];
-  else if (fpKey && fpMap[fpKey]) path = fpMap[fpKey];
-  if (path) readCount[path] = (readCount[path] || 0) + 1;
-  var force = !!path;
-  try {
-    var n = Math.min(got, 48);
-    var b = new Uint8Array(buf.readByteArray(n));
-    var h = hex(b);
-    var kind = classify(h);
-    if (!force && !kind) return;
-    if (force && !kind) kind = 'other';
-    var key = (force ? 'F' : 'C') + via + '|' + h.slice(0, 16);
-    if (seen[key]) return;
-    seen[key] = 1;
-    var bt = [];
-    try {
-      var frames = Thread.backtrace(this.context, Backtracer.ACCURATE);
-      for (var i = 0; i < Math.min(frames.length, 10); i++) bt.push(describe(frames[i]));
-    } catch (e) {}
-    send({ ev: 'sniff', kind: kind, via: via, force: force, fd: fd,
-           got: got, head: h, p: path ? path.slice(0, 140) : null, bt: bt, t: Date.now() });
-  } catch (e) {}
-}
 
 ['read', 'pread', 'pread64'].forEach(function (sym) {
-  tryAttach('read:' + sym, function () {
-    var p = Module.getGlobalExportByName(sym);
-    Interceptor.attach(p, {
-      onEnter: function (a) { this.fd = a[0].toInt32(); this.buf = a[1]; },
-      onLeave: function (ret) { maybeReport.call(this, this.fd, null, this.buf, ret.toInt32(), sym); }
-    });
-  });
-});
-
-var filenoF = null;
-try { filenoF = new NativeFunction(Module.getGlobalExportByName('fileno'), 'int', ['pointer']); } catch (e) {}
-
-tryAttach('fread', function () {
-  var p = Module.getGlobalExportByName('fread');
+  var p = null;
+  try { p = Module.getGlobalExportByName(sym); } catch (e) {}
+  if (!p) return;
   Interceptor.attach(p, {
-    onEnter: function (a) {
-      this.buf = a[0];
-      this.sz = a[1].toInt32();
-      this.fp = a[3].toString();
-      this.fd = -1;
-      try { if (filenoF) this.fd = filenoF(a[3]); } catch (e) {}
-    },
+    onEnter: function (a) { this.fd = a[0].toInt32(); this.buf = a[1]; },
     onLeave: function (ret) {
-      var items = ret.toInt32();
-      var got = items > 0 ? items * (this.sz || 1) : 0;
-      maybeReport.call(this, this.fd, this.fp, this.buf, got, 'fread');
+      var fd = this.fd;
+      if (!fdMap[fd]) return;
+      var got = ret.toInt32();
+      if (got < 4) return;
+      var h = '';
+      try {
+        var b = new Uint8Array(this.buf.readByteArray(Math.min(got, 24)));
+        for (var i = 0; i < b.length; i++) h += ('0' + b[i].toString(16)).slice(-2);
+      } catch (e) { return; }
+      send({ ev: 'ihi_read', via: sym, got: got, head: h });
     }
   });
 });
 
-send({ ev: 'sniff_armed12', lanes: lanes, errs: errs });
+try {
+  var fp2 = Module.getGlobalExportByName('fread');
+  var filenoF = new NativeFunction(Module.getGlobalExportByName('fileno'), 'int', ['pointer']);
+  Interceptor.attach(fp2, {
+    onEnter: function (a) {
+      this.buf = a[0]; this.sz = a[1].toInt32();
+      this.fp = a[3].toString();
+      this.fd = -1;
+      try { this.fd = filenoF(a[3]); } catch (e) {}
+    },
+    onLeave: function (ret) {
+      var k = this.fp;
+      var fd = this.fd;
+      if (!fpMap[k] && !fdMap[fd]) return;
+      var items = ret.toInt32();
+      if (items <= 0) return;
+      var got = items * (this.sz || 1);
+      var h = '';
+      try {
+        var b = new Uint8Array(this.buf.readByteArray(Math.min(got, 24)));
+        for (var i = 0; i < b.length; i++) h += ('0' + b[i].toString(16)).slice(-2);
+      } catch (e) {}
+      var bt = [];
+      try {
+        var frames = Thread.backtrace(this.context, Backtracer.ACCURATE);
+        for (var i = 0; i < Math.min(frames.length, 6); i++) bt.push(describe(frames[i]));
+      } catch (e) {}
+      send({ ev: 'ihi_fread', got: got, head: h, bt: bt });
+    }
+  });
+} catch (e) { send({ ev: 'fread_hook_err', e: String(e) }); }
 
-setInterval(function () {
-  send({ ev: 'sniff_stat', enterIhi: enterIhi, fps: Object.keys(fpMap).length,
-         fds: Object.keys(fdMap).length, reads: JSON.stringify(readCount),
-         lanes: lanes.length, errs: errs.length });
-}, 8000);
+send({ ev: 'v14_ready' });
