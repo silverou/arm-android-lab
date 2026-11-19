@@ -1,28 +1,21 @@
 'use strict';
 /*
- * Content sniffer v9: global-state fopen tracking + fstat size + fclose.
+ * Content sniffer v10: capture FILE* at fopen return-address (v9 leaveN=0
+ * proves fopen onLeave never runs — packer/binding breaks leave trampoline).
  *
- * v8: onEnter saw main.ihi twice, onLeave never fired (this-context broken
- * by multi-hook). opens=0, hits=0, immediate fstat after fopen, no content
- * read -> hypothesize size/magic gate BEFORE any fread.
- *
- * This version:
- *   - fopen/fopen64 via attach; global pending stack (not this)
- *   - leave counter proves whether onLeave runs at all
- *   - after ihi fopen, log fstat st_size for next few fstats
- *   - fclose of mapped FILE* logs whether any read happened
- *   - fread/read still content-classify (exact magic only)
+ * onEnter(.ihi): one-shot Interceptor.attach(this.returnAddress).
+ * At return: x0 = FILE* -> fileno -> fd map. Then force-report reads +
+ * fstat size on that fd. Content classify still applies globally.
  */
 var seen = {};
 var hits = 0;
-var pending = [];          // paths waiting for fopen return
-var fpMap = {};            // FILE* -> path
-var fdMap = {};            // fd -> path
-var readCount = {};        // path -> nreads
-var leaveN = 0;
+var fpMap = {};
+var fdMap = {};
+var readCount = {};
 var enterIhi = 0;
-var statWatch = 0;         // countdown of fstats to inspect after ihi open
+var retHooks = 0;
 var lastStatSize = null;
+var statWatch = 0;
 var lanes = [];
 var errs = [];
 
@@ -58,99 +51,72 @@ function tryAttach(name, fn) {
   }
 }
 
-// --- fopen / fopen64
+function armReturnCapture(path, via) {
+  var retAddr = null;
+  try {
+    // Frida: this.returnAddress available in onEnter
+    retAddr = this.returnAddress;
+  } catch (e) {}
+  if (!retAddr) {
+    try { retAddr = this.context.pc.add(4); } catch (e2) {}
+  }
+  if (!retAddr) {
+    send({ ev: 'sniff_retmiss', p: path.slice(0, 100), via: via });
+    return;
+  }
+  var key = retAddr.toString() + '|' + via + '|' + enterIhi;
+  if (seen['ret|' + key]) return;
+  seen['ret|' + key] = 1;
+  try {
+    Interceptor.attach(retAddr, {
+      onEnter: function () {
+        retHooks++;
+        var fp = null;
+        try { fp = this.context.x0; } catch (e) {}
+        if (!fp || fp.isNull()) {
+          send({ ev: 'sniff_retfail', p: path.slice(0, 100), via: via });
+          return;
+        }
+        var fpk = fp.toString();
+        fpMap[fpk] = path;
+        var fd = -1;
+        try {
+          var fileno = new NativeFunction(Module.getGlobalExportByName('fileno'), 'int', ['pointer']);
+          fd = fileno(fp);
+        } catch (e) {}
+        if (fd >= 0) {
+          fdMap[fd] = path;
+          statWatch = 8;
+        }
+        send({ ev: 'sniff_ret', p: path.slice(0, 140), via: via, fp: fpk, fd: fd,
+               ret: retAddr.toString() });
+      }
+    });
+    send({ ev: 'sniff_retarm', p: path.slice(0, 100), via: via, at: retAddr.toString() });
+  } catch (e) {
+    send({ ev: 'sniff_retarm_err', e: String(e), at: retAddr.toString() });
+  }
+}
+
+// --- fopen/fopen64: arm return capture (no reliance on onLeave)
 ['fopen', 'fopen64'].forEach(function (sym) {
   tryAttach(sym, function () {
     var p = Module.getGlobalExportByName(sym);
     Interceptor.attach(p, {
       onEnter: function (a) {
-        try { this.path = a[0].readCString(); } catch (e) { this.path = ''; }
-        this.isIhi = !!(this.path && /\.ihi$/.test(this.path));
-        if (this.isIhi) {
-          enterIhi++;
-          pending.push(this.path);
-          send({ ev: 'sniff_fopen_ihi', via: sym, n: enterIhi, p: this.path.slice(0, 140) });
-        }
-      },
-      onLeave: function (ret) {
-        leaveN++;
-        if (!this.isIhi) return;
-        var path = pending.length ? pending.pop() : (this.path || '?');
-        if (ret.isNull()) {
-          send({ ev: 'sniff_fopen_ihi_leave', p: path.slice(0, 140), ok: 0, leaveN: leaveN });
-          return;
-        }
-        var fp = ret.toString();
-        fpMap[fp] = path;
-        var fd = -1;
-        try {
-          var fileno = new NativeFunction(Module.getGlobalExportByName('fileno'), 'int', ['pointer']);
-          fd = fileno(ret);
-        } catch (e) {}
-        if (fd >= 0) fdMap[fd] = path;
-        statWatch = 6;
-        send({ ev: 'sniff_fopen_ihi_leave', p: path.slice(0, 140), ok: 1,
-               fp: fp, fd: fd, leaveN: leaveN });
+        var path = '';
+        try { path = a[0].readCString(); } catch (e) {}
+        if (!path || !/\.ihi$/.test(path)) return;
+        enterIhi++;
+        send({ ev: 'sniff_fopen_ihi', via: sym, n: enterIhi, p: path.slice(0, 140) });
+        armReturnCapture.call(this, path, sym);
       }
+      // no onLeave — proven dead
     });
   });
 });
 
-// --- fstat: after ihi open, report st_size (gate hypothesis)
-tryAttach('fstat', function () {
-  var p = Module.getGlobalExportByName('fstat');
-  Interceptor.attach(p, {
-    onEnter: function (a) {
-      this.fd = a[0].toInt32();
-      this.buf = a[1];
-      this.watch = statWatch > 0;
-      this.path = fdMap[this.fd] || null;
-    },
-    onLeave: function (ret) {
-      var r = ret.toInt32();
-      if (r !== 0) return;
-      if (!this.watch && !this.path) return;
-      try {
-        // struct stat st_size at offset 48 on arm64 bionic (off_t at 48)
-        // safer: use fstat64 layout — arm64 linux stat: st_size @ 48
-        var size = this.buf.add(48).readS64().toString();
-        var ino = this.buf.add(8).readU64().toString();
-        if (this.path || this.watch) {
-          if (statWatch > 0) statWatch--;
-          send({ ev: 'sniff_fstat', fd: this.fd, size: size, ino: ino,
-                 path: this.path ? this.path.slice(0, 140) : null,
-                 watch: this.watch, r: r });
-          lastStatSize = size;
-        }
-      } catch (e) {
-        send({ ev: 'sniff_fstat_err', fd: this.fd, e: String(e) });
-      }
-    }
-  });
-});
-
-// also fstatat for path-based
-tryAttach('fstatat', function () {
-  var p = null;
-  try { p = Module.getGlobalExportByName('fstatat'); } catch (e) {}
-  if (!p) return;
-  Interceptor.attach(p, {
-    onEnter: function (a) {
-      try { this.path = a[1].readCString(); } catch (e) { this.path = ''; }
-      this.buf = a[2];
-      this.isIhi = !!(this.path && /\.ihi$/.test(this.path));
-    },
-    onLeave: function (ret) {
-      if (!this.isIhi || ret.toInt32() !== 0) return;
-      try {
-        var size = this.buf.add(48).readS64().toString();
-        send({ ev: 'sniff_fstatat', p: this.path.slice(0, 140), size: size });
-      } catch (e) {}
-    }
-  });
-});
-
-// --- open family: map fd
+// --- open family
 ['open', 'open64', 'openat', 'openat64'].forEach(function (sym) {
   tryAttach(sym, function () {
     var p = Module.getGlobalExportByName(sym);
@@ -164,7 +130,7 @@ tryAttach('fstatat', function () {
         var fd = ret.toInt32();
         if (fd >= 0) {
           fdMap[fd] = this.path;
-          statWatch = 6;
+          statWatch = 8;
           send({ ev: 'sniff_open_ihi', sym: sym, fd: fd, p: this.path.slice(0, 140) });
         } else {
           send({ ev: 'sniff_open_ihi', sym: sym, fd: fd, p: this.path.slice(0, 140), err: 1 });
@@ -174,7 +140,31 @@ tryAttach('fstatat', function () {
   });
 });
 
-// --- close / fclose
+// --- fstat size watch
+tryAttach('fstat', function () {
+  var p = Module.getGlobalExportByName('fstat');
+  Interceptor.attach(p, {
+    onEnter: function (a) {
+      this.fd = a[0].toInt32();
+      this.buf = a[1];
+      this.path = fdMap[this.fd] || null;
+      this.watch = statWatch > 0;
+    },
+    onLeave: function (ret) {
+      if (ret.toInt32() !== 0) return;
+      if (!this.path && !this.watch) return;
+      try {
+        var size = this.buf.add(48).readS64().toString();
+        if (statWatch > 0) statWatch--;
+        lastStatSize = size;
+        send({ ev: 'sniff_fstat', fd: this.fd, size: size,
+               path: this.path ? this.path.slice(0, 140) : null, watch: this.watch });
+      } catch (e) {}
+    }
+  });
+});
+
+// --- close/fclose
 tryAttach('close', function () {
   var p = Module.getGlobalExportByName('close');
   Interceptor.attach(p, {
@@ -202,17 +192,12 @@ tryAttach('fclose', function () {
   });
 });
 
-function bumpRead(path) {
-  if (!path) return;
-  readCount[path] = (readCount[path] || 0) + 1;
-}
-
 function maybeReport(fd, fpKey, buf, got, via) {
   if (hits >= 30 || got < 4) return;
   var path = null;
   if (fd >= 0 && fdMap[fd]) path = fdMap[fd];
   else if (fpKey && fpMap[fpKey]) path = fpMap[fpKey];
-  if (path) bumpRead(path);
+  if (path) readCount[path] = (readCount[path] || 0) + 1;
   var force = !!path;
   try {
     var n = Math.min(got, 48);
@@ -271,12 +256,11 @@ tryAttach('fread', function () {
   });
 });
 
-send({ ev: 'sniff_armed8', lanes: lanes, errs: errs });
+send({ ev: 'sniff_armed9', lanes: lanes, errs: errs });
 
 setInterval(function () {
-  send({ ev: 'sniff_stat', hits: hits, enterIhi: enterIhi, leaveN: leaveN,
-         pending: pending.length, fps: Object.keys(fpMap).length,
-         fds: Object.keys(fdMap).length,
+  send({ ev: 'sniff_stat', hits: hits, enterIhi: enterIhi, retHooks: retHooks,
+         fps: Object.keys(fpMap).length, fds: Object.keys(fdMap).length,
          reads: JSON.stringify(readCount),
          lanes: lanes.length, errs: errs.length, lastStatSize: lastStatSize });
 }, 8000);
