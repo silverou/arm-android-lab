@@ -669,7 +669,7 @@ jobs:
           ls -la sodump_out | head -12 || true
           ls -la dexdump_out | head -12 || true
           echo "--- v177 lua script dump pull ---"
-          sudo docker exec redroid /system/bin/sh -c 'cd /data/user/0/com.ihuman.pinyin/files && ls -la luadump_* luabyte_dump.bin mems_lua_* xxtea_key.txt 2>/dev/null | head -30; ls luadump_*.lua luabyte_dump*.bin mems_lua_*.bin mems_lua_*.lua filelua_*.bin filelua_map.txt xxtea_key.txt luadump_map.txt 2>/dev/null > /data/local/tmp/ldlist; if [ -s /data/local/tmp/ldlist ]; then tar czf /data/local/tmp/luadump.tgz -T /data/local/tmp/ldlist; fi; ls -la /data/local/tmp/luadump.tgz' || true
+          sudo docker exec redroid /system/bin/sh -c 'cd /data/user/0/com.ihuman.pinyin/files && ls -la luadump_* luabyte_dump.bin mems_lua_* xxtea_key.txt 2>/dev/null | head -30; ls luadump_*.lua luabyte_dump*.bin mems_lua_*.bin mems_lua_*.lua filelua_*.bin filelua_map.txt bss_code.bin xxtea_key.txt luadump_map.txt 2>/dev/null > /data/local/tmp/ldlist; if [ -s /data/local/tmp/ldlist ]; then tar czf /data/local/tmp/luadump.tgz -T /data/local/tmp/ldlist; fi; ls -la /data/local/tmp/luadump.tgz' || true
           sudo docker exec redroid /system/bin/cat /data/local/tmp/luadump.tgz > luadump.tgz 2>/dev/null || true
           ls -la luadump.tgz || true
 
@@ -724,6 +724,7 @@ jobs:
           name: capture-out
           path: |
             build_checkpatch.log
+            bss_code.bin
             logcat_override.txt
             xxtea_key.txt
             sodump_out
