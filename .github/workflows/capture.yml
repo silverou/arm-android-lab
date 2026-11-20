@@ -216,7 +216,14 @@ jobs:
           if f then f:write("override-ok"); f:close() end
           return "override-ok"
           OVEOF
-          sudo docker cp ov/main.lua redroid:/data/local/tmp/override_main.lua
+          # prepend the 8-byte container magic the gate strncmp()s against
+          python3 - <<'PYEOF'
+          magic = b"42a64166"
+          body = open("ov/main.lua","rb").read()
+          open("ov/main.ihi","wb").write(magic + body)
+          print("wrote ov/main.ihi", 8+len(body))
+          PYEOF
+          sudo docker cp ov/main.ihi redroid:/data/local/tmp/override_main.lua
           UID_APP=$(tools/gx.sh "stat -c %u /data/user/0/com.ihuman.pinyin" 2>/dev/null | tr -d '[:space:]')
           echo "app uid: $UID_APP"
           tools/gx.sh "mkdir -p /data/user/0/com.ihuman.pinyin/files/asset/src/launcher"
