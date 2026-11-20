@@ -1,21 +1,18 @@
 'use strict';
 /*
- * Sniffer v16: Stalker short-trace after the .ihi loader returns.
+ * Sniffer v17: Stalker-trace the thread right from loader_ret (0x1492e40).
  *
- * Established: loader @ libcocos2dlua+0x1492bdc reads FULL file (no magic
- * check), returns Data{ptr,size} of our PLAIN lua. Resume address
- * 0x1492490 is a branch island -> 0x1168a48 (OLLVM-obfuscated region).
- * Static analysis stalls; this probe Stalker-traces the current thread for
- * ~600ms after first resume, collecting call/ret targets, then unfollows.
- * Also logs registers at the landing pad.
+ * v16 lesson: cannot Interceptor.attach at resume pad 0x1492490 ("unable to
+ * intercept"), so start Stalker at the loader epilogue instead — control
+ * has not yet left the loader, so the whole post-return path
+ * (0x1492490 -> obfuscated 0x1168a48 region) gets traced.
  *
- * Light: send() only, no file IO inside hooks.
+ * Collect call/ret summary for 800ms, filter interesting frames.
  */
 var MODRE = /libcocos2dlua/;
 var armed = false;
 var enterIhi = 0;
 var tracing = false;
-var fpMap = {};
 
 function describe(addr) {
   var s = addr.toString();
@@ -36,43 +33,31 @@ function findMod() {
   return m;
 }
 
-function regs(ctx) {
-  var o = {};
-  ['x0','x1','x2','x3','x4','x8','x19','x20','x21','x22','x29','lr'].forEach(function (r) {
-    try { o[r] = ctx[r].toString(); } catch (e) {}
-  });
-  return o;
-}
-
 function startTrace() {
   if (tracing) return;
   tracing = true;
-  var tid = Process.id; // follow main thread; loader runs on it (bt showed art frames)
-  // Actually follow the CURRENT thread (the one resuming)
+  var tid = Process.getCurrentThreadId();
   try {
     var summary = {};
-    var blocks = [];
-    Stalker.follow(Process.getCurrentThreadId(), {
-      events: { call: true, ret: true, exec: false, block: false, compile: false },
+    var execs = [];
+    Stalker.follow(tid, {
+      events: { call: true, ret: false, exec: false, block: false, compile: false },
       onCallSummary: function (s) {
         for (var k in s) summary[k] = (summary[k] || 0) + s[k];
-      },
-      onReceive: function (raw) {
-        if (blocks.length < 4) blocks.push(raw.slice(0, 64));
       }
     });
-    send({ ev: 'stalker_on', tid: Process.getCurrentThreadId() });
+    send({ ev: 'stalker_on', tid: tid });
     setTimeout(function () {
-      try { Stalker.unfollow(); } catch (e) {}
+      try { Stalker.unfollow(tid); } catch (e) { send({ ev: 'stalker_unfollow_err', e: String(e) }); }
       setTimeout(function () {
         try { Stalker.garbageCollect(); } catch (e) {}
         var out = [];
         for (var k in summary) out.push({ a: describe(k), n: summary[k] });
         out.sort(function (x, y) { return y.n - x.n; });
-        send({ ev: 'stalker_summary', calls: out.slice(0, 60), total: out.length });
+        send({ ev: 'stalker_summary', total: out.length, calls: out.slice(0, 80) });
         tracing = false;
-      }, 200);
-    }, 600);
+      }, 300);
+    }, 800);
   } catch (e) {
     send({ ev: 'stalker_err', e: String(e) });
     tracing = false;
@@ -83,18 +68,6 @@ function arm(m) {
   if (armed) return;
   armed = true;
 
-  // landing pad: resume address after loader
-  try {
-    Interceptor.attach(m.base.add(0x1492490), {
-      onEnter: function () {
-        var o = { ev: 'landing', at: '0x1492490', r: regs(this.context), t: Date.now() };
-        send(o);
-        startTrace();
-      }
-    });
-  } catch (e) { send({ ev: 'arm_err', pad: '1492490', e: String(e) }); }
-
-  // loader return site (Data in flight)
   try {
     Interceptor.attach(m.base.add(0x1492e40), {
       onEnter: function () {
@@ -113,24 +86,29 @@ function arm(m) {
             }
           }
         } catch (e) {}
+        try { o.lr = describe(this.context.lr); } catch (e) {}
         send(o);
+        startTrace();
       }
     });
   } catch (e) { send({ ev: 'arm_err', pad: 'ret', e: String(e) }); }
 
-  // island bl targets seen statically
-  [0x1168c7c, 0x1168de4, 0x1169148].forEach(function (rva) {
+  // island bl sites (statically found): report if reached
+  [{r: 0x1168c7c, t: 0x10f9d98}, {r: 0x1168de4, t: 0x110d7d8},
+   {r: 0x1168eac, t: 0x110d7d8}, {r: 0x11690ac, t: 0x110d7d8},
+   {r: 0x1169148, t: 0x12bb618}].forEach(function (c) {
     try {
-      Interceptor.attach(m.base.add(rva), {
+      Interceptor.attach(m.base.add(c.r), {
         onEnter: function (a) {
-          send({ ev: 'island_call', at: '0x' + rva.toString(16),
+          send({ ev: 'island_call', at: '0x' + c.r.toString(16),
+                 tgt: '0x' + c.t.toString(16),
                  x0: a[0].toString(), x1: a[1].toString(), x2: a[2].toString() });
         }
       });
-    } catch (e) {}
+    } catch (e) { send({ ev: 'island_arm_err', at: '0x' + c.r.toString(16), e: String(e) }); }
   });
 
-  send({ ev: 'v16_armed' });
+  send({ ev: 'v17_armed' });
 }
 
 ['fopen', 'fopen64'].forEach(function (sym) {
@@ -150,4 +128,4 @@ function arm(m) {
   });
 });
 
-send({ ev: 'v16_ready' });
+send({ ev: 'v17_ready' });
