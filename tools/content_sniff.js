@@ -117,6 +117,16 @@ function arm(m) {
         } catch (e) {}
         try { o.lr = describe(this.context.lr); } catch (e) {}
         send(o);
+        // LIVE dump of the gate region: offline bss_code.bin has ciphertext
+        // at 0x1bf5244+ (two strncmp sites decrypt only at runtime)
+        try {
+          var win = new Uint8Array(m.base.add(0x1bf5100).readByteArray(0x500));
+          var h = '';
+          for (var i = 0; i < win.length; i++) h += ('0' + win[i].toString(16)).slice(-2);
+          for (var off = 0; off < h.length; off += 3000) {
+            send({ ev: 'gate_win', seg: off / 3000, hex: h.slice(off, off + 3000) });
+          }
+        } catch (e) { send({ ev: 'gate_win_err', e: String(e) }); }
         // validation happens right after return — install cmp hooks now
         installCmpHooks();
         // auto-disable heavy reporting after 3s
