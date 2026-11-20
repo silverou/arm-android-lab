@@ -133,6 +133,31 @@ function arm(m) {
     attachRva(m, 0xdea900, xteaHandlers);
   }
 
+  // gate2 bypass experiment: force strncmp(field,"753c1715",8) == 0
+  // gate2 sits at libcocos2dlua+0x1bf5394, return addr 0x1bf5398
+  try {
+    var sn = Module.getGlobalExportByName('strncmp');
+    Interceptor.attach(sn, {
+      onEnter: function (a) {
+        this.isGate2 = false;
+        try {
+          var off = this.returnAddress.sub(m.base).toInt32();
+          if (off === 0x1bf5398) {
+            this.isGate2 = true;
+            this.h0 = hexHead(a[0], 8);
+            this.h1 = hexHead(a[1], 8);
+          }
+        } catch (e) {}
+      },
+      onLeave: function (ret) {
+        if (!this.isGate2) return;
+        send({ ev: 'gate2_force', was: ret.toInt32(), h0: this.h0, h1: this.h1 });
+        ret.replace(ptr(0));
+      }
+    });
+    send({ ev: 'gate2_hook', at: describe(sn) });
+  } catch (e) { send({ ev: 'gate2_hook_err', e: String(e) }); }
+
   send({ ev: 'v23_armed' });
 }
 
