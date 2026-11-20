@@ -136,7 +136,7 @@ function arm(m) {
   // gate hooks: export strncmp + bionic internal __strncmp_aarch64
   // (tombstone gave __strncmp_aarch64 = libc+0x49c80 for this build)
   var EMPTY = Memory.allocUtf8String('');
-  var GATE2 = '753c1715';
+  var GATE2 = '3735336331373135'; // hex of "753c1715"
 
   function mkSnHandler(tag) {
     return {
