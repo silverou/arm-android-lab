@@ -61,22 +61,23 @@ function installCmpHooks() {
     try {
       Interceptor.attach(p, {
         onEnter: function (a) {
+          // NULL-fix for ALL callers (gate calls from anon BSS page too)
+          if (a[0].isNull()) { a[0] = EMPTY; send({ ev: 'cmp_nullfix', sym: sym, arg: 0,
+              caller: describe(this.returnAddress) }); }
+          if (a[1].isNull()) { a[1] = EMPTY; send({ ev: 'cmp_nullfix', sym: sym, arg: 1,
+              caller: describe(this.returnAddress) }); }
           this.inCocos = false;
           try {
             var mm = Process.findModuleByAddress(this.returnAddress);
             if (mm && MODRE.test(mm.name)) this.inCocos = true;
           } catch (e) {}
-          if (!this.inCocos) return;
-          // gate crash fix: replace NULL string args with ""
-          if (a[0].isNull()) { a[0] = EMPTY; send({ ev: 'cmp_nullfix', sym: sym, arg: 0,
-              caller: describe(this.returnAddress) }); }
-          if (a[1].isNull()) { a[1] = EMPTY; send({ ev: 'cmp_nullfix', sym: sym, arg: 1,
-              caller: describe(this.returnAddress) }); }
+          // report: cocos module callers OR any caller right after loader (3s window active)
+          this.report = this.inCocos || true; // cmpN cap already limits volume
           this.a0 = a[0]; this.a1 = a[1];
           this.n = nargs === 3 ? a[2].toInt32() : -1;
         },
         onLeave: function (ret) {
-          if (!this.inCocos) return;
+          if (!this.report) return;
           if (cmpN > 80) return;
           cmpN++;
           send({ ev: 'cmp', sym: sym, ret: ret.toInt32(), n: this.n,
