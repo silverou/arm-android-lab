@@ -71,12 +71,25 @@ function tryHook(name, handlers) {
   }
 }
 
+// attaach by RVA when export is stripped by the packer
+function attachRva(m, rva, handlers) {
+  try {
+    var addr = m.base.add(rva);
+    Interceptor.attach(addr, handlers);
+    send({ ev: 'hooked_rva', rva: '0x' + rva.toString(16), at: describe(addr) });
+    return true;
+  } catch (e) {
+    send({ ev: 'hook_rva_err', rva: '0x' + rva.toString(16), e: String(e) });
+    return false;
+  }
+}
+
 function arm(m) {
   if (armed) return;
   armed = true;
 
   // real decrypt entry (cold): Data& in x0, const string& path in x1
-  tryHook('_ZN7cocos2d9FileUtils17decryptDataIfNeedERNS_4DataERKSs', {
+  var ddnHandlers = {
     onEnter: function (a) {
       sawN++;
       if (sawN > 40) return;
@@ -100,10 +113,13 @@ function arm(m) {
         send(o);
       } catch (e) { send({ ev: 'ddn_leave_err', e: String(e) }); }
     }
-  });
+  };
+  if (!tryHook('_ZN7cocos2d9FileUtils17decryptDataIfNeedERNS_4DataERKSs', ddnHandlers)) {
+    attachRva(m, 0x44660, ddnHandlers);
+  }
 
   // xxtea_decrypt(data, len, key, keylen, retlen) — capture the key if used
-  tryHook('_Z13xxtea_decryptPhjS_jPj', {
+  var xteaHandlers = {
     onEnter: function (a) {
       if (sawN > 60) return;
       var o = { ev: 'xxtea', dlen: a[1].toInt32(), klen: a[3].toInt32(),
@@ -112,7 +128,10 @@ function arm(m) {
                 bt: bt.call(this) };
       send(o);
     }
-  });
+  };
+  if (!tryHook('_Z13xxtea_decryptPhjS_jPj', xteaHandlers)) {
+    attachRva(m, 0xdea900, xteaHandlers);
+  }
 
   send({ ev: 'v23_armed' });
 }
