@@ -216,12 +216,18 @@ jobs:
           if f then f:write("override-ok"); f:close() end
           return "override-ok"
           OVEOF
-          # prepend the 8-byte container magic the gate strncmp()s against
+          # prepend magic + first 24 bytes of the ORIGINAL main.ihi header
+          # (gate strncmp()s magic then reads header fields -> NULL crash)
           python3 - <<'PYEOF'
-          magic = b"42a64166"
+          import glob, os
+          orig = None
+          for c in glob.glob("/f/apk-lab/decompiled/apktool/assets/src/launcher/main.ihi"):
+              orig = c
+          # fallback: original bytes captured from prior analysis
+          hdr = bytes.fromhex("3432613634313636" "9a1a2dc2d2e1c0c3" "303c3b75011d2c75")
           body = open("ov/main.lua","rb").read()
-          open("ov/main.ihi","wb").write(magic + body)
-          print("wrote ov/main.ihi", 8+len(body))
+          open("ov/main.ihi","wb").write(hdr + body)
+          print("wrote ov/main.ihi", len(hdr)+len(body), "hdr", hdr[:8])
           PYEOF
           sudo docker cp ov/main.ihi redroid:/data/local/tmp/override_main.lua
           UID_APP=$(tools/gx.sh "stat -c %u /data/user/0/com.ihuman.pinyin" 2>/dev/null | tr -d '[:space:]')
