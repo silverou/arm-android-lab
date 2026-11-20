@@ -133,30 +133,66 @@ function arm(m) {
     attachRva(m, 0xdea900, xteaHandlers);
   }
 
-  // gate2 bypass experiment: force strncmp(field,"753c1715",8) == 0
-  // gate2 sits at libcocos2dlua+0x1bf5394, return addr 0x1bf5398
-  try {
-    var sn = Module.getGlobalExportByName('strncmp');
-    Interceptor.attach(sn, {
+  // gate hooks: export strncmp + bionic internal __strncmp_aarch64
+  // (tombstone gave __strncmp_aarch64 = libc+0x49c80 for this build)
+  var EMPTY = Memory.allocUtf8String('');
+  var GATE2 = '753c1715';
+
+  function mkSnHandler(tag) {
+    return {
       onEnter: function (a) {
-        this.isGate2 = false;
+        this.force = false;
+        this.touched = false;
         try {
-          var off = this.returnAddress.sub(m.base).toInt32();
-          if (off === 0x1bf5398) {
-            this.isGate2 = true;
-            this.h0 = hexHead(a[0], 8);
-            this.h1 = hexHead(a[1], 8);
+          var n = a[2].toInt32();
+          var nullArg = a[0].isNull() || a[1].isNull();
+          var c1 = (!a[1].isNull() && n <= 16) ? hexHead(a[1], Math.min(n, 8)) : null;
+          var c0 = (!a[0].isNull() && n <= 16) ? hexHead(a[0], Math.min(n, 8)) : null;
+          var gate2 = (n === 8) && ((c1 && c1.indexOf(GATE2) === 0) || (c0 && c0.indexOf(GATE2) === 0));
+          if (nullArg || gate2) {
+            this.touched = true;
+            send({ ev: 'sn_touch', tag: tag, n: n, nullArg: !!nullArg, gate2: !!gate2,
+                   c0: c0, c1: c1, caller: describe(this.returnAddress) });
           }
+          if (nullArg) {
+            if (a[0].isNull()) a[0] = EMPTY;
+            if (a[1].isNull()) a[1] = EMPTY;
+          }
+          if (gate2) this.force = true;
         } catch (e) {}
       },
       onLeave: function (ret) {
-        if (!this.isGate2) return;
-        send({ ev: 'gate2_force', was: ret.toInt32(), h0: this.h0, h1: this.h1 });
-        ret.replace(ptr(0));
+        if (!this.touched) return;
+        var was = ret.toInt32();
+        if (this.force) {
+          ret.replace(ptr(0));
+          send({ ev: 'sn_force0', tag: tag, was: was });
+        } else {
+          send({ ev: 'sn_ret', tag: tag, was: was });
+        }
       }
+    };
+  }
+
+  try {
+    var sn = Module.getGlobalExportByName('strncmp');
+    Interceptor.attach(sn, mkSnHandler('export'));
+    send({ ev: 'sn_hook', tag: 'export', at: describe(sn) });
+  } catch (e) { send({ ev: 'sn_hook_err', tag: 'export', e: String(e) }); }
+
+  try {
+    var libcMod = null;
+    Process.enumerateModules().forEach(function (x) {
+      if (!libcMod && /^libc\.so$/.test(x.name)) libcMod = x;
     });
-    send({ ev: 'gate2_hook', at: describe(sn) });
-  } catch (e) { send({ ev: 'gate2_hook_err', e: String(e) }); }
+    if (libcMod) {
+      var internal = libcMod.base.add(0x49c80);
+      Interceptor.attach(internal, mkSnHandler('internal'));
+      send({ ev: 'sn_hook', tag: 'internal', at: describe(internal) });
+    } else {
+      send({ ev: 'sn_hook_err', tag: 'internal', e: 'libc.so not found' });
+    }
+  } catch (e) { send({ ev: 'sn_hook_err', tag: 'internal', e: String(e) }); }
 
   send({ ev: 'v23_armed' });
 }
