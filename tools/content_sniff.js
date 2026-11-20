@@ -53,6 +53,7 @@ function bt() {
 
 function installCmpHooks() {
   var lanes = [];
+  var EMPTY = Memory.allocUtf8String('');
   function hookCmp(sym, nargs) {
     var p = null;
     try { p = Module.getGlobalExportByName(sym); } catch (e) {}
@@ -66,12 +67,17 @@ function installCmpHooks() {
             if (mm && MODRE.test(mm.name)) this.inCocos = true;
           } catch (e) {}
           if (!this.inCocos) return;
+          // gate crash fix: replace NULL string args with ""
+          if (a[0].isNull()) { a[0] = EMPTY; send({ ev: 'cmp_nullfix', sym: sym, arg: 0,
+              caller: describe(this.returnAddress) }); }
+          if (a[1].isNull()) { a[1] = EMPTY; send({ ev: 'cmp_nullfix', sym: sym, arg: 1,
+              caller: describe(this.returnAddress) }); }
           this.a0 = a[0]; this.a1 = a[1];
           this.n = nargs === 3 ? a[2].toInt32() : -1;
         },
         onLeave: function (ret) {
           if (!this.inCocos) return;
-          if (cmpN > 50) return;
+          if (cmpN > 80) return;
           cmpN++;
           send({ ev: 'cmp', sym: sym, ret: ret.toInt32(), n: this.n,
                  h0: hexHead(this.a0, 24),
