@@ -1,14 +1,13 @@
 'use strict';
 /*
- * Sniffer v18: catch the post-loader validation statically.
+ * Sniffer v19: cmp hooks installed ONLY after loader_ret.
  *
- * Facts: loader returns Data{plain lua,0xc0}, LR=0x1492490 -> b 0x1168a48
- * (obfuscated island). Stalker missed the fast path; island bl targets are
- * statically known. This probe:
- *   1) hooks the 5 known island bl targets (arg dump + backtrace)
- *   2) hooks libc memcmp/strcmp/strncmp/strstr: when the CALLER is inside
- *      libcocos2dlua, dump both buffers' heads + backtrace — catches any
- *      magic ("42a64166") / format comparison on our data
+ * v18 lesson: memcmp/strcmp hooks armed at spawn -> shell thread gate
+ * 0xdead5014/5019 kills the process before main.ihi loads (2/2 runs).
+ * This version: at spawn only fopen tracking + loader_ret site; the
+ * moment loader returns our Data, install memcmp/strcmp/strncmp/strstr
+ * hooks (caller-filtered to libcocos2dlua) for the next 3 seconds to
+ * catch the validation step.
  */
 var MODRE = /libcocos2dlua/;
 var armed = false;
@@ -52,25 +51,47 @@ function bt() {
   return out;
 }
 
+function installCmpHooks() {
+  var lanes = [];
+  function hookCmp(sym, nargs) {
+    var p = null;
+    try { p = Module.getGlobalExportByName(sym); } catch (e) {}
+    if (!p) return;
+    try {
+      Interceptor.attach(p, {
+        onEnter: function (a) {
+          this.inCocos = false;
+          try {
+            var mm = Process.findModuleByAddress(this.returnAddress);
+            if (mm && MODRE.test(mm.name)) this.inCocos = true;
+          } catch (e) {}
+          if (!this.inCocos) return;
+          this.a0 = a[0]; this.a1 = a[1];
+          this.n = nargs === 3 ? a[2].toInt32() : -1;
+        },
+        onLeave: function (ret) {
+          if (!this.inCocos) return;
+          if (cmpN > 50) return;
+          cmpN++;
+          send({ ev: 'cmp', sym: sym, ret: ret.toInt32(), n: this.n,
+                 h0: hexHead(this.a0, 24),
+                 h1: (this.a1 && !this.a1.isNull()) ? hexHead(this.a1, 24) : null,
+                 caller: describe(this.returnAddress), t: Date.now() });
+        }
+      });
+      lanes.push(sym);
+    } catch (e) {}
+  }
+  hookCmp('memcmp', 3);
+  hookCmp('strcmp', 2);
+  hookCmp('strncmp', 3);
+  hookCmp('strstr', 2);
+  send({ ev: 'cmp_installed', lanes: lanes });
+}
+
 function arm(m) {
   if (armed) return;
   armed = true;
-
-  // island bl targets
-  [0x10f9d98, 0x110d7d8, 0x12bb618].forEach(function (rva) {
-    try {
-      Interceptor.attach(m.base.add(rva), {
-        onEnter: function (a) {
-          send({ ev: 'fn_call', at: '0x' + rva.toString(16),
-                 x0: a[0].toString(), x1: a[1].toString(), x2: a[2].toString(),
-                 h0: hexHead(a[0], 16), h1: (a[1] && !a[1].isNull()) ? hexHead(a[1], 16) : null,
-                 bt: bt.call(this) });
-        }
-      });
-    } catch (e) { send({ ev: 'fn_arm_err', at: '0x' + rva.toString(16), e: String(e) }); }
-  });
-
-  // loader return site for orientation
   try {
     Interceptor.attach(m.base.add(0x1492e40), {
       onEnter: function () {
@@ -85,44 +106,27 @@ function arm(m) {
         } catch (e) {}
         try { o.lr = describe(this.context.lr); } catch (e) {}
         send(o);
+        // validation happens right after return — install cmp hooks now
+        installCmpHooks();
+        // auto-disable heavy reporting after 3s
+        setTimeout(function () { cmpN = 1000; }, 3000);
       }
     });
-  } catch (e) { send({ ev: 'arm_err', pad: 'ret', e: String(e) }); }
-
-  send({ ev: 'v18_armed' });
-}
-
-function hookCmp(sym, nargs) {
-  var p = null;
-  try { p = Module.getGlobalExportByName(sym); } catch (e) {}
-  if (!p) return;
-  try {
-    Interceptor.attach(p, {
-      onEnter: function (a) {
-        this.inCocos = false;
-        try {
-          var lr = this.returnAddress;
-          var mm = Process.findModuleByAddress(lr);
-          if (mm && MODRE.test(mm.name)) this.inCocos = true;
-        } catch (e) {}
-        if (!this.inCocos) return;
-        if (cmpN > 60) return;
-        this.a0 = a[0]; this.a1 = a[1];
-        this.n = nargs === 3 ? a[2].toInt32() : -1;
-      },
-      onLeave: function (ret) {
-        if (!this.inCocos) return;
-        cmpN++;
-        send({ ev: 'cmp', sym: sym, ret: ret.toInt32(), n: this.n,
-               h0: hexHead(this.a0, 24), h1: (this.a1 && !this.a1.isNull()) ? hexHead(this.a1, 24) : null,
-               caller: describe(this.returnAddress), t: Date.now() });
-      }
+    // island fns (cheap, only these three)
+    [0x10f9d98, 0x110d7d8, 0x12bb618].forEach(function (rva) {
+      try {
+        Interceptor.attach(m.base.add(rva), {
+          onEnter: function (a) {
+            send({ ev: 'fn_call', at: '0x' + rva.toString(16),
+                   x0: a[0].toString(), x1: a[1].toString(), x2: a[2].toString(),
+                   h0: hexHead(a[0], 16), bt: bt.call(this) });
+          }
+        });
+      } catch (e) {}
     });
-    lanes.push(sym);
-  } catch (e) {}
+    send({ ev: 'v19_armed' });
+  } catch (e) { send({ ev: 'arm_err', e: String(e) }); }
 }
-
-var lanes = [];
 
 ['fopen', 'fopen64'].forEach(function (sym) {
   var p = null;
@@ -141,9 +145,4 @@ var lanes = [];
   });
 });
 
-hookCmp('memcmp', 3);
-hookCmp('strcmp', 2);
-hookCmp('strncmp', 3);
-hookCmp('strstr', 2);
-
-send({ ev: 'v18_ready', cmp_lanes: lanes });
+send({ ev: 'v19_ready' });
