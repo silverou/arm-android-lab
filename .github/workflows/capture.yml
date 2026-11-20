@@ -219,15 +219,12 @@ jobs:
           # prepend magic + first 24 bytes of the ORIGINAL main.ihi header
           # (gate strncmp()s magic then reads header fields -> NULL crash)
           python3 - <<'PYEOF'
-          import glob, os
-          orig = None
-          for c in glob.glob("/f/apk-lab/decompiled/apktool/assets/src/launcher/main.ihi"):
-              orig = c
-          # fallback: original bytes captured from prior analysis
-          hdr = bytes.fromhex("3432613634313636" "9a1a2dc2d2e1c0c3" "303c3b75011d2c75")
+          # first 128 bytes of the ORIGINAL main.ihi (magic + encrypted header)
+          orig_hex = "34326136343136369a1a2dc2d2e1c0c3303c3b75011d2c7570a14888335136b777f838972c775c6a8034db658722b1089561bace079bc078eaacdef71e99aa6e4048c48c50ba6e1f840e05e28f107efe52786380c928290758d90922f9fe32bac54dbbad64c4c824b586725e97e5cab040fee007e58fd93bbf12198ce94b41e4"
+          hdr = bytes.fromhex(orig_hex)
           body = open("ov/main.lua","rb").read()
           open("ov/main.ihi","wb").write(hdr + body)
-          print("wrote ov/main.ihi", len(hdr)+len(body), "hdr", hdr[:8])
+          print("wrote ov/main.ihi", len(hdr)+len(body), "hdr", len(hdr))
           PYEOF
           sudo docker cp ov/main.ihi redroid:/data/local/tmp/override_main.lua
           UID_APP=$(tools/gx.sh "stat -c %u /data/user/0/com.ihuman.pinyin" 2>/dev/null | tr -d '[:space:]')
