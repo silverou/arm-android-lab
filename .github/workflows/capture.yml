@@ -285,6 +285,8 @@ jobs:
             tools/gx.sh "dumpsys window 2>/dev/null | grep -a mCurrentFocus" || true
             tools/gx.sh "dumpsys activity activities 2>/dev/null | grep -a mResumedActivity" || true
             tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
+            tools/gx.sh 'P=$(pidof com.ihuman.pinyin); echo PID=$P; for t in /proc/$P/task/*; do echo "== $(cat $t/comm 2>/dev/null)"; cat $t/stack 2>/dev/null | head -6; done' > task_stacks.txt 2>&1 || true
+            tools/gx.sh 'P=$(pidof com.ihuman.pinyin); cat /proc/$P/net/tcp /proc/$P/net/tcp6 2>/dev/null | head -40' > tcp_state.txt 2>&1 || true
             tools/gx.sh "logcat -d -v time" > logcat_selfbuild.txt 2>/dev/null || true
             tools/gx.sh "am force-stop com.ihuman.pinyin" || true
             exit 0
@@ -815,6 +817,8 @@ jobs:
             sc_sb4.png
             sc_sb5.png
             logcat_selfbuild.txt
+            task_stacks.txt
+            tcp_state.txt
             tcp1.txt
             flows.txt
             flows1.txt
