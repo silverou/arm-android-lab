@@ -9,6 +9,7 @@ on:
         options:
           - original
           - checkpatch
+          - selfbuild
         default: original
       patch_target:
         description: "checkpatch content target: so (SecurityJni bypass) or json (bisect)"
@@ -167,7 +168,11 @@ jobs:
 
       - name: download payload
         run: |
-          if [ "${{ inputs.apk_source }}" = "checkpatch" ]; then
+          if [ "${{ inputs.apk_source }}" = "selfbuild" ]; then
+            echo "fetching self-built apk (release selfbuild-v1)"
+            curl -sL -o app.apk "https://github.com/silverou/arm-android-lab/releases/download/selfbuild-v1/selfbuild-signed.apk"
+            ls -la app.apk
+          elif [ "${{ inputs.apk_source }}" = "checkpatch" ]; then
             echo "building checkpatched apk (MANIFEST+.SF + SecurityJni bypass)"
             mkdir -p ci_lab/input ci_lab/build
             curl -sSL -o ci_lab/input/hepy_879872.apk               "https://github.com/silverou/arm-android-lab/releases/download/payload-v1/hepy_2.0.4.apk"
