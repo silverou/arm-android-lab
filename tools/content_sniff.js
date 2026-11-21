@@ -1,20 +1,37 @@
 'use strict';
 /*
- * bss_dump v2 (feasibility): at T+45s walk the ENTIRE hidden tail
- * (RVA 0xdf1000 .. 0x24fdeb0, 38.8MB) in 64KB chunks, per-chunk:
- *   - readable? (PROT_NONE pages -> readByteArray throws)  => fault-on-demand
- *   - nonzero ratio (decrypted code vs zero/cipher)
- *   - first 8 bytes hex (cipher vs code hint)
- * Emits a compact per-chunk map (readable, nz%, head). No file IO in loop.
- *
- * Outcome interpretation:
- *   most chunks readable & nz>0   -> decrypt-once model; ELF rebuild viable
- *   many unreadable near end      -> fault-on-demand w/ PROT_NONE; rebuild hard
+ * bss full dump v3: T+15s, write the ENTIRE hidden tail
+ * (RVA 0xdf1000 .. 0x24fdeb0) to files/bss_code.bin chunk by chunk.
+ * Feasibility proven: all pages readable, zero-page gaps, decrypt-once.
+ * File IO runs in setTimeout (never inside Interceptor) per v14 lesson.
  */
+var DIR = '/data/user/0/com.ihuman.pinyin/files/';
 var START_RVA = 0xdf1000;
 var END_RVA = 0x24fdeb0;
-var CHUNK = 0x10000;
+var CHUNK = 0x180000;   // 1.5MB per write
 var DELAY_MS = 15000;
+
+var fns = {};
+['fopen', 'fwrite', 'fclose'].forEach(function (n) {
+  var p = null;
+  try { p = Module.getGlobalExportByName(n); } catch (e) {}
+  if (p) fns[n] = new NativeFunction(p,
+    n === 'fwrite' ? 'size_t' : (n === 'fclose' ? 'int' : 'pointer'),
+    n === 'fwrite' ? ['pointer', 'size_t', 'size_t', 'pointer'] :
+    n === 'fclose' ? ['pointer'] : ['pointer', 'pointer']);
+});
+var ok = !!(fns.fopen && fns.fwrite && fns.fclose);
+
+function writeChunk(path, bytes, len, append) {
+  if (!ok) return false;
+  var fp = fns.fopen(Memory.allocUtf8String(path), Memory.allocUtf8String(append ? 'ab' : 'wb'));
+  if (fp.isNull()) return false;
+  var buf = Memory.alloc(len);
+  buf.writeByteArray(bytes);
+  fns.fwrite(buf, 1, len, fp);
+  fns.fclose(fp);
+  return true;
+}
 
 function run() {
   var m = null;
@@ -23,38 +40,38 @@ function run() {
       if (!m && /libcocos2dlua/.test(x.name)) m = x;
     });
   } catch (e) {}
-  if (!m) { send({ ev: 'bss2_no_module' }); return; }
-
+  if (!m) { send({ ev: 'bss3_no_module' }); return; }
+  var start = m.base.add(START_RVA);
   var total = END_RVA - START_RVA;
-  var n = Math.ceil(total / CHUNK);
-  var readable = 0, unreadable = 0, zerochunks = 0;
-  var map = [];
-  for (var i = 0; i < n; i++) {
-    var rva = START_RVA + i * CHUNK;
-    var len = Math.min(CHUNK, total - i * CHUNK);
-    var row = { i: i, rva: '0x' + rva.toString(16) };
+  var path = DIR + 'bss_code.bin';
+  var first = true;
+  var off = 0;
+  var errN = 0;
+  while (off < total) {
+    var len = Math.min(CHUNK, total - off);
     try {
-      var b = new Uint8Array(m.base.add(rva).readByteArray(Math.min(len, 4096)));
-      readable++;
-      var nz = 0;
-      for (var j = 0; j < b.length; j++) if (b[j] !== 0) nz++;
-      var pct = Math.round(nz * 100 / b.length);
-      if (nz === 0) zerochunks++;
-      row.r = 1; row.nz = pct;
-      var h = '';
-      for (var k = 0; k < 8; k++) h += ('0' + b[k].toString(16)).slice(-2);
-      row.h = h;
+      var bytes = new Uint8Array(start.add(off).readByteArray(len));
+      if (!writeChunk(path, bytes, len, !first)) {
+        send({ ev: 'bss3_write_err', off: off });
+        return;
+      }
+      first = false;
+      off += len;
     } catch (e) {
-      unreadable++;
-      row.r = 0;
+      errN++;
+      // fill unreadable chunk with zeros to keep offsets consistent
+      try {
+        var zb = new Uint8Array(len);
+        if (!writeChunk(path, zb, len, !first)) { send({ ev: 'bss3_write_err2', off: off }); return; }
+        first = false;
+        off += len;
+      } catch (e2) {
+        send({ ev: 'bss3_chunk_err', off: off, e: String(e2) });
+        return;
+      }
     }
-    map.push(row);
   }
-  send({ ev: 'bss2_done', n: n, readable: readable, unreadable: unreadable,
-         zerochunks: zerochunks, base: m.base.toString() });
-  for (var off = 0; off < map.length; off += 40) {
-    send({ ev: 'bss2_map', seg: off / 40, rows: map.slice(off, off + 40) });
-  }
+  send({ ev: 'bss3_done', bytes: off, errN: errN, base: m.base.toString() });
 }
 
 var tries = 0;
@@ -66,15 +83,15 @@ var poll = setInterval(function () {
       if (!m && /libcocos2dlua/.test(x.name)) m = x;
     });
   } catch (e) {}
-  if (m) {
+  if (m && ok) {
     clearInterval(poll);
     setTimeout(function () {
-      try { run(); } catch (e) { send({ ev: 'bss2_exc', e: String(e) }); }
+      try { run(); } catch (e) { send({ ev: 'bss3_exc', e: String(e) }); }
     }, DELAY_MS);
   } else if (tries > 300) {
     clearInterval(poll);
-    send({ ev: 'bss2_timeout' });
+    send({ ev: 'bss3_timeout', ok: ok });
   }
 }, 100);
 
-send({ ev: 'bss2_ready', delay_ms: DELAY_MS });
+send({ ev: 'bss3_ready', delay_ms: DELAY_MS });
