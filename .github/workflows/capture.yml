@@ -255,6 +255,33 @@ jobs:
       - name: plain launch probe
         run: |
           set -x
+          if [ "${{ inputs.apk_source }}" = "selfbuild" ]; then
+            echo "--- selfbuild UI probe (no taps; screenshots at 8/18/38s) ---"
+            tools/gx.sh "input keyevent 224" || true
+            tools/gx.sh "wm dismiss-keyguard" || true
+            tools/gx.sh "settings put system screen_off_timeout 2147483647" || true
+            tools/gx.sh "svc power stayon true" || true
+            tools/gx.sh "logcat -c" || true
+            tools/gx.sh "am force-stop com.ihuman.pinyin" || true
+            sleep 2
+            tools/gx.sh "am start -W -n com.ihuman.pinyin/org.cocos2dx.lua.AppActivity" || true
+            sleep 8
+            tools/gx.sh "screencap -p /sdcard/sb1.png" || true
+            sudo docker cp redroid:/sdcard/sb1.png sc_sb1.png 2>/dev/null || true
+            tools/gx.sh "dumpsys window 2>/dev/null | grep -a mCurrentFocus" || true
+            sleep 10
+            tools/gx.sh "screencap -p /sdcard/sb2.png" || true
+            sudo docker cp redroid:/sdcard/sb2.png sc_sb2.png 2>/dev/null || true
+            sleep 20
+            tools/gx.sh "screencap -p /sdcard/sb3.png" || true
+            sudo docker cp redroid:/sdcard/sb3.png sc_sb3.png 2>/dev/null || true
+            tools/gx.sh "dumpsys window 2>/dev/null | grep -a mCurrentFocus" || true
+            tools/gx.sh "dumpsys activity activities 2>/dev/null | grep -a mResumedActivity" || true
+            tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
+            tools/gx.sh "logcat -d -v time" > logcat_selfbuild.txt 2>/dev/null || true
+            tools/gx.sh "am force-stop com.ihuman.pinyin" || true
+            exit 0
+          fi
           tools/gx.sh "pm list packages -d" || true
           echo "--- wake/unlock/stayon (v51: hwui aborts on no-surface when display is off) ---"
           tools/gx.sh "input keyevent 224" || true
@@ -294,6 +321,7 @@ jobs:
           tools/gx.sh "am force-stop com.ihuman.pinyin" || true
 
       - name: frida setup
+        if: ${{ inputs.apk_source != 'selfbuild' }}
         run: |
           set -x
           curl -sL -o fs.xz "https://github.com/frida/frida/releases/download/17.24.3/frida-server-17.24.3-android-arm64.xz"
@@ -370,6 +398,7 @@ jobs:
           echo "frida ready"
 
       - name: mitm setup (guest-wide TLS capture)
+        if: ${{ inputs.apk_source != 'selfbuild' }}
         run: |
           set -x
           python3 -m pip install -q --break-system-packages mitmproxy >/dev/null 2>&1 || true
@@ -425,6 +454,7 @@ jobs:
           echo "MITMPID=$MITMPID" >> "$GITHUB_ENV"
 
       - name: frida spawn capture
+        if: ${{ inputs.apk_source != 'selfbuild' }}
         run: |
           set -x
           tools/gx.sh "am force-stop com.ihuman.pinyin" || true
@@ -773,6 +803,10 @@ jobs:
             ss_dir
             lc1.txt
             lc2.txt
+            sc_sb1.png
+            sc_sb2.png
+            sc_sb3.png
+            logcat_selfbuild.txt
             tcp1.txt
             flows.txt
             flows1.txt
