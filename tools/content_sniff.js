@@ -133,6 +133,8 @@ function arm(m) {
     attachRva(m, 0xdea900, xteaHandlers);
   }
 
+  // capture loader Data for later comparison
+  var loaderDataPtr = null, loaderDataSize = -1;
   // gate hooks: export strncmp + bionic internal __strncmp_aarch64
   // (tombstone gave __strncmp_aarch64 = libc+0x49c80 for this build)
   var EMPTY = Memory.allocUtf8String('');
@@ -151,8 +153,16 @@ function arm(m) {
           var gate2 = (n === 8) && ((c1 && c1.indexOf(GATE2) === 0) || (c0 && c0.indexOf(GATE2) === 0));
           if (nullArg || gate2) {
             this.touched = true;
-            send({ ev: 'sn_touch', tag: tag, n: n, nullArg: !!nullArg, gate2: !!gate2,
-                   c0: c0, c1: c1, caller: describe(this.returnAddress) });
+            var o = { ev: 'sn_touch', tag: tag, n: n, nullArg: !!nullArg, gate2: !!gate2,
+                      c0: c0, c1: c1, caller: describe(this.returnAddress) };
+            if (gate2) {
+              // field bytes (arg0 of strncmp) — decrypted already?
+              try { o.f0_64 = hexHead(a[0], 64); } catch (e) { o.f0_64 = 'err'; }
+              try { o.f1_64 = hexHead(a[1], 64); } catch (e) { o.f1_64 = 'err'; }
+              try { o.f0s = a[0].readUtf8String(32); } catch (e) {}
+              try { o.bt = bt.call(this); } catch (e) {}
+            }
+            send(o);
           }
           if (nullArg) {
             if (a[0].isNull()) a[0] = EMPTY;
