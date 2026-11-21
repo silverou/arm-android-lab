@@ -14,7 +14,7 @@
 var START_RVA = 0xdf1000;
 var END_RVA = 0x24fdeb0;
 var CHUNK = 0x10000;
-var DELAY_MS = 45000;
+var DELAY_MS = 15000;
 
 function run() {
   var m = null;
