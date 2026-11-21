@@ -273,9 +273,15 @@ jobs:
             sleep 10
             tools/gx.sh "screencap -p /data/local/tmp/sb2.png" || true
             sudo docker cp redroid:/data/local/tmp/sb2.png sc_sb2.png || true
-            sleep 20
+            sleep 22
             tools/gx.sh "screencap -p /data/local/tmp/sb3.png" || true
             sudo docker cp redroid:/data/local/tmp/sb3.png sc_sb3.png || true
+            sleep 30
+            tools/gx.sh "screencap -p /data/local/tmp/sb4.png" || true
+            sudo docker cp redroid:/data/local/tmp/sb4.png sc_sb4.png || true
+            sleep 30
+            tools/gx.sh "screencap -p /data/local/tmp/sb5.png" || true
+            sudo docker cp redroid:/data/local/tmp/sb5.png sc_sb5.png || true
             tools/gx.sh "dumpsys window 2>/dev/null | grep -a mCurrentFocus" || true
             tools/gx.sh "dumpsys activity activities 2>/dev/null | grep -a mResumedActivity" || true
             tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
@@ -399,7 +405,6 @@ jobs:
           echo "frida ready"
 
       - name: mitm setup (guest-wide TLS capture)
-        if: ${{ inputs.apk_source != 'selfbuild' }}
         run: |
           set -x
           python3 -m pip install -q --break-system-packages mitmproxy >/dev/null 2>&1 || true
@@ -807,6 +812,8 @@ jobs:
             sc_sb1.png
             sc_sb2.png
             sc_sb3.png
+            sc_sb4.png
+            sc_sb5.png
             logcat_selfbuild.txt
             tcp1.txt
             flows.txt
