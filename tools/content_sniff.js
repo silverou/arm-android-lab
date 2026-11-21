@@ -9,7 +9,7 @@ var DIR = '/data/user/0/com.ihuman.pinyin/files/';
 var START_RVA = 0xdf1000;
 var END_RVA = 0x24fdeb0;
 var CHUNK = 0x180000;   // 1.5MB per write
-var DELAY_MS = 15000;
+var DELAY_MS = 3000;
 
 var fns = {};
 ['fopen', 'fwrite', 'fclose'].forEach(function (n) {
