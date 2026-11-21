@@ -261,20 +261,21 @@ jobs:
             tools/gx.sh "wm dismiss-keyguard" || true
             tools/gx.sh "settings put system screen_off_timeout 2147483647" || true
             tools/gx.sh "svc power stayon true" || true
+            tools/gx.sh "settings put secure immersive_mode_confirmations confirmed" || true
             tools/gx.sh "logcat -c" || true
             tools/gx.sh "am force-stop com.ihuman.pinyin" || true
             sleep 2
             tools/gx.sh "am start -W -n com.ihuman.pinyin/org.cocos2dx.lua.AppActivity" || true
             sleep 8
-            tools/gx.sh "screencap -p /sdcard/sb1.png" || true
-            sudo docker cp redroid:/sdcard/sb1.png sc_sb1.png 2>/dev/null || true
+            tools/gx.sh "screencap -p /data/local/tmp/sb1.png" || true
+            sudo docker cp redroid:/data/local/tmp/sb1.png sc_sb1.png || true
             tools/gx.sh "dumpsys window 2>/dev/null | grep -a mCurrentFocus" || true
             sleep 10
-            tools/gx.sh "screencap -p /sdcard/sb2.png" || true
-            sudo docker cp redroid:/sdcard/sb2.png sc_sb2.png 2>/dev/null || true
+            tools/gx.sh "screencap -p /data/local/tmp/sb2.png" || true
+            sudo docker cp redroid:/data/local/tmp/sb2.png sc_sb2.png || true
             sleep 20
-            tools/gx.sh "screencap -p /sdcard/sb3.png" || true
-            sudo docker cp redroid:/sdcard/sb3.png sc_sb3.png 2>/dev/null || true
+            tools/gx.sh "screencap -p /data/local/tmp/sb3.png" || true
+            sudo docker cp redroid:/data/local/tmp/sb3.png sc_sb3.png || true
             tools/gx.sh "dumpsys window 2>/dev/null | grep -a mCurrentFocus" || true
             tools/gx.sh "dumpsys activity activities 2>/dev/null | grep -a mResumedActivity" || true
             tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
