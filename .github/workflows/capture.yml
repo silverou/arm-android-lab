@@ -199,6 +199,61 @@ jobs:
           echo "$out" | grep -a Success
           tools/gx.sh "pm path com.ihuman.pinyin"
 
+      - name: mitm setup (guest-wide TLS capture)
+        run: |
+          set -x
+          python3 -m pip install -q --break-system-packages mitmproxy >/dev/null 2>&1 || true
+          python3 -c "import mitmproxy, importlib.metadata as im; print('mitmproxy', im.version('mitmproxy'))" || true
+          rm -rf /tmp/mitm; mkdir -p /tmp/mitm
+          nohup mitmdump --mode transparent -p 8080 --set confdir=/tmp/mitm --set block_global=false --set flow_detail=1 -w /tmp/flows.mitm --listen-host 0.0.0.0 >/tmp/mitmdump.log 2>&1 &
+          MITMPID=$!
+          echo "mitm started pid=$MITMPID"
+          sleep 3
+          ss -ltn | grep 8080 || true
+          sudo modprobe nf_nat_redirect 2>&1 || true
+          sudo modprobe xt_REDIRECT 2>&1 || true
+          REDOK=none
+          for tool in iptables iptables-legacy; do
+            command -v $tool >/dev/null 2>&1 || continue
+            if sudo $tool -t nat -A PREROUTING -i docker0 -p tcp --dport 443 -j REDIRECT --to-ports 8080 2>/tmp/e443.txt; then
+              sudo $tool -t nat -A PREROUTING -i docker0 -p tcp --dport 80 -j REDIRECT --to-ports 8080 2>/tmp/e80.txt || true
+              REDOK=$tool; echo "REDIRECT ok via $tool"; break
+            else
+              echo "REDIRECT fail via $tool: $(cat /tmp/e443.txt 2>/dev/null)"
+            fi
+          done
+          if [ "$REDOK" = "none" ]; then
+            echo "--- fallback: native nft ---"
+            sudo nft 'add table ip nat' 2>/dev/null || true
+            sudo nft 'add chain ip nat prerouting { type nat hook prerouting priority -100; }' 2>/dev/null || true
+            sudo nft 'add rule ip nat prerouting iifname "docker0" tcp dport 443 redirect to :8080' 2>&1 || true
+            sudo nft 'add rule ip nat prerouting iifname "docker0" tcp dport 80 redirect to :8080' 2>&1 || true
+            sudo nft list chain ip nat prerouting 2>&1 || true
+          fi
+          echo "redirect_tool=$REDOK"
+          sudo iptables -t nat -L PREROUTING -v -n || true
+          sudo iptables-legacy -t nat -L PREROUTING -v -n 2>/dev/null || true
+          for i in $(seq 1 20); do [ -f /tmp/mitm/mitmproxy-ca-cert.pem ] && break; sleep 1; done
+          ls -la /tmp/mitm/ || true
+          HASH=$(openssl x509 -inform PEM -subject_hash_old -in /tmp/mitm/mitmproxy-ca-cert.pem 2>/dev/null | head -1)
+          echo "ca hash=$HASH"
+          sudo docker cp /tmp/mitm/mitmproxy-ca-cert.pem redroid:/data/local/tmp/mca.pem || true
+          sudo docker exec -e CH="$HASH" redroid /system/bin/sh -c '
+            rm -rf /data/local/tmp/cacerts
+            cp -r /system/etc/security/cacerts /data/local/tmp/cacerts
+            cp /data/local/tmp/mca.pem /data/local/tmp/cacerts/$CH.0
+            chmod 644 /data/local/tmp/cacerts/$CH.0
+            chown root:root /data/local/tmp/cacerts/$CH.0
+            mount --bind /data/local/tmp/cacerts /system/etc/security/cacerts
+            ls /system/etc/security/cacerts | wc -l
+            ls /system/etc/security/cacerts | grep -i "$CH" || true
+          ' || true
+          HOSTIP=$(ip -4 route show default | awk '{print $3; exit}')
+          echo "hostip=$HOSTIP"
+          tools/gx.sh "settings put global http_proxy :0" || true
+          tools/gx.sh "settings get global http_proxy" || true
+          echo "MITMPID=$MITMPID" >> "$GITHUB_ENV"
+
       - name: override test (plain-lua main.ihi swap)
         if: ${{ inputs.override_test }}
         run: |
@@ -285,6 +340,11 @@ jobs:
             tools/gx.sh "dumpsys window 2>/dev/null | grep -a mCurrentFocus" || true
             tools/gx.sh "dumpsys activity activities 2>/dev/null | grep -a mResumedActivity" || true
             tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
+            echo "--- selfbuild mitm flows dump ---"
+            python3 tools/flows_dump.py || true
+            cp /tmp/flows.mitm flows.mitm 2>/dev/null || true
+            tail -40 /tmp/mitmdump.log > mitm1.log 2>&1 || true
+            { sudo iptables -t nat -L PREROUTING -v -n 2>&1 || true; } > ipt1.txt
             tools/gx.sh 'P=$(pidof com.ihuman.pinyin); echo PID=$P; for t in /proc/$P/task/*; do echo "== $(cat $t/comm 2>/dev/null)"; cat $t/stack 2>/dev/null | head -6; done' > task_stacks.txt 2>&1 || true
             tools/gx.sh 'P=$(pidof com.ihuman.pinyin); cat /proc/$P/net/tcp /proc/$P/net/tcp6 2>/dev/null | head -40' > tcp_state.txt 2>&1 || true
             tools/gx.sh "logcat -d -v time" > logcat_selfbuild.txt 2>/dev/null || true
@@ -405,61 +465,6 @@ jobs:
           echo "frida listening on $PORT_OK"
           python3 -m pip install -q --break-system-packages frida==17.24.3
           echo "frida ready"
-
-      - name: mitm setup (guest-wide TLS capture)
-        run: |
-          set -x
-          python3 -m pip install -q --break-system-packages mitmproxy >/dev/null 2>&1 || true
-          python3 -c "import mitmproxy, importlib.metadata as im; print('mitmproxy', im.version('mitmproxy'))" || true
-          rm -rf /tmp/mitm; mkdir -p /tmp/mitm
-          nohup mitmdump --mode transparent -p 8080 --set confdir=/tmp/mitm --set block_global=false --set flow_detail=1 -w /tmp/flows.mitm --listen-host 0.0.0.0 >/tmp/mitmdump.log 2>&1 &
-          MITMPID=$!
-          echo "mitm started pid=$MITMPID"
-          sleep 3
-          ss -ltn | grep 8080 || true
-          sudo modprobe nf_nat_redirect 2>&1 || true
-          sudo modprobe xt_REDIRECT 2>&1 || true
-          REDOK=none
-          for tool in iptables iptables-legacy; do
-            command -v $tool >/dev/null 2>&1 || continue
-            if sudo $tool -t nat -A PREROUTING -i docker0 -p tcp --dport 443 -j REDIRECT --to-ports 8080 2>/tmp/e443.txt; then
-              sudo $tool -t nat -A PREROUTING -i docker0 -p tcp --dport 80 -j REDIRECT --to-ports 8080 2>/tmp/e80.txt || true
-              REDOK=$tool; echo "REDIRECT ok via $tool"; break
-            else
-              echo "REDIRECT fail via $tool: $(cat /tmp/e443.txt 2>/dev/null)"
-            fi
-          done
-          if [ "$REDOK" = "none" ]; then
-            echo "--- fallback: native nft ---"
-            sudo nft 'add table ip nat' 2>/dev/null || true
-            sudo nft 'add chain ip nat prerouting { type nat hook prerouting priority -100; }' 2>/dev/null || true
-            sudo nft 'add rule ip nat prerouting iifname "docker0" tcp dport 443 redirect to :8080' 2>&1 || true
-            sudo nft 'add rule ip nat prerouting iifname "docker0" tcp dport 80 redirect to :8080' 2>&1 || true
-            sudo nft list chain ip nat prerouting 2>&1 || true
-          fi
-          echo "redirect_tool=$REDOK"
-          sudo iptables -t nat -L PREROUTING -v -n || true
-          sudo iptables-legacy -t nat -L PREROUTING -v -n 2>/dev/null || true
-          for i in $(seq 1 20); do [ -f /tmp/mitm/mitmproxy-ca-cert.pem ] && break; sleep 1; done
-          ls -la /tmp/mitm/ || true
-          HASH=$(openssl x509 -inform PEM -subject_hash_old -in /tmp/mitm/mitmproxy-ca-cert.pem 2>/dev/null | head -1)
-          echo "ca hash=$HASH"
-          sudo docker cp /tmp/mitm/mitmproxy-ca-cert.pem redroid:/data/local/tmp/mca.pem || true
-          sudo docker exec -e CH="$HASH" redroid /system/bin/sh -c '
-            rm -rf /data/local/tmp/cacerts
-            cp -r /system/etc/security/cacerts /data/local/tmp/cacerts
-            cp /data/local/tmp/mca.pem /data/local/tmp/cacerts/$CH.0
-            chmod 644 /data/local/tmp/cacerts/$CH.0
-            chown root:root /data/local/tmp/cacerts/$CH.0
-            mount --bind /data/local/tmp/cacerts /system/etc/security/cacerts
-            ls /system/etc/security/cacerts | wc -l
-            ls /system/etc/security/cacerts | grep -i "$CH" || true
-          ' || true
-          HOSTIP=$(ip -4 route show default | awk '{print $3; exit}')
-          echo "hostip=$HOSTIP"
-          tools/gx.sh "settings put global http_proxy :0" || true
-          tools/gx.sh "settings get global http_proxy" || true
-          echo "MITMPID=$MITMPID" >> "$GITHUB_ENV"
 
       - name: frida spawn capture
         if: ${{ inputs.apk_source != 'selfbuild' }}
