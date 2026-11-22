@@ -170,7 +170,7 @@ jobs:
         run: |
           if [ "${{ inputs.apk_source }}" = "selfbuild" ]; then
             echo "fetching self-built apk (release selfbuild-v1)"
-            curl -sL -o app.apk "https://github.com/silverou/arm-android-lab/releases/download/selfbuild-v1/selfbuild-signed-v2.apk"
+            curl -sL -o app.apk "https://github.com/silverou/arm-android-lab/releases/download/selfbuild-v1/selfbuild-signed-v3.apk"
             ls -la app.apk
           elif [ "${{ inputs.apk_source }}" = "checkpatch" ]; then
             echo "building checkpatched apk (MANIFEST+.SF + SecurityJni bypass)"
@@ -307,36 +307,6 @@ jobs:
           tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
           tools/gx.sh "logcat -d -v time" > logcat_override.txt 2>/dev/null || true
 
-      - name: frida setup (selfbuild)
-        if: ${{ inputs.apk_source == 'selfbuild' }}
-        run: |
-          set -x
-          curl -sL -o fs.xz "https://github.com/frida/frida/releases/download/17.24.3/frida-server-17.24.3-android-arm64.xz"
-          xz -d fs.xz
-          sudo docker cp fs redroid:/data/local/tmp/.logd_helper
-          sudo docker cp tools/frida_launch.sh redroid:/data/local/tmp/frida_launch.sh
-          sudo docker exec redroid /system/bin/sh -c 'chmod 755 /data/local/tmp/.logd_helper /data/local/tmp/frida_launch.sh'
-          sudo docker exec -d redroid /system/bin/sh /data/local/tmp/frida_launch.sh
-          sleep 3
-          PORT_OK=""
-          for i in $(seq 1 15); do
-            if timeout 2 bash -c "exec 3<>/dev/tcp/$BRIDGE_IP/27042" 2>/dev/null; then
-              PORT_OK="$BRIDGE_IP:27042"; break
-            fi
-            if timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/27042" 2>/dev/null; then
-              PORT_OK="127.0.0.1:27042"; break
-            fi
-            sleep 2
-          done
-          if [ -z "$PORT_OK" ]; then
-            echo "frida-server port never opened (selfbuild)"
-            tools/gx.sh "logcat -d -v time" 2>/dev/null | grep -a "logd_helper" | tail -10 || true
-            exit 1
-          fi
-          echo "FRIDA_DEVICE=$PORT_OK" >> "$GITHUB_ENV"
-          echo "frida listening on $PORT_OK"
-          python3 -m pip install -q --break-system-packages frida==17.24.3
-
       - name: plain launch probe
         run: |
           set -x
@@ -350,12 +320,6 @@ jobs:
             tools/gx.sh "logcat -c" || true
             tools/gx.sh "am force-stop com.ihuman.pinyin" || true
             sleep 2
-            echo "--- experiment: pre-seed sp_confirm_privacy (Z1 gate) ---"
-            SBUID=$(tools/gx.sh "stat -c %u /data/user/0/com.ihuman.pinyin" 2>/dev/null | tr -d '[:space:]\r')
-            printf "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n    <boolean name=\"probe_confirmed\" value=\"true\" />\n</map>\n" > /tmp/sp_confirm_privacy.xml
-            sudo docker exec redroid /system/bin/sh -c 'mkdir -p /data/user/0/com.ihuman.pinyin/shared_prefs'
-            sudo docker cp /tmp/sp_confirm_privacy.xml redroid:/data/user/0/com.ihuman.pinyin/shared_prefs/sp_confirm_privacy.xml || true
-            tools/gx.sh "chown $SBUID:$SBUID /data/user/0/com.ihuman.pinyin/shared_prefs/sp_confirm_privacy.xml; chmod 660 /data/user/0/com.ihuman.pinyin/shared_prefs/sp_confirm_privacy.xml; ls -la /data/user/0/com.ihuman.pinyin/shared_prefs/" || true
             tools/gx.sh "am start -W -n com.ihuman.pinyin/org.cocos2dx.lua.AppActivity" || true
             sleep 8
             tools/gx.sh "screencap -p /data/local/tmp/sb1.png" || true
@@ -367,19 +331,32 @@ jobs:
             sleep 22
             tools/gx.sh "screencap -p /data/local/tmp/sb3.png" || true
             sudo docker cp redroid:/data/local/tmp/sb3.png sc_sb3.png || true
-            echo "--- frida java/native stacks #1 ---"
+            echo "--- ART thread dump via SIGQUIT (#1) ---"
             SBPID=$(tools/gx.sh "pidof com.ihuman.pinyin" 2>/dev/null | tr -d '[:space:]\r')
             echo "SBPID=$SBPID"
-            if [ -n "$SBPID" ]; then python3 tools/sb_thread_dump.py "$SBPID" sb_stacks1.json || true; fi
+            if [ -n "$SBPID" ]; then
+              tools/gx.sh "kill -3 $SBPID" || true
+              sleep 3
+              sudo docker exec redroid /system/bin/sh -c 'ls -la /data/anr/ 2>/dev/null; for f in /data/anr/*; do echo "==== $f"; cat "$f"; done' > anr1.txt 2>&1 || true
+              tools/gx.sh "logcat -d -v time" 2>/dev/null | grep -a -A400 "DALVIK THREADS" > dalvik1.txt || true
+              wc -l anr1.txt dalvik1.txt || true
+            fi
             sleep 30
             tools/gx.sh "screencap -p /data/local/tmp/sb4.png" || true
             sudo docker cp redroid:/data/local/tmp/sb4.png sc_sb4.png || true
             sleep 30
             tools/gx.sh "screencap -p /data/local/tmp/sb5.png" || true
             sudo docker cp redroid:/data/local/tmp/sb5.png sc_sb5.png || true
-            echo "--- frida java/native stacks #2 ---"
+            echo "--- ART thread dump via SIGQUIT (#2) ---"
             SBPID=$(tools/gx.sh "pidof com.ihuman.pinyin" 2>/dev/null | tr -d '[:space:]\r')
-            if [ -n "$SBPID" ]; then python3 tools/sb_thread_dump.py "$SBPID" sb_stacks2.json || true; fi
+            echo "SBPID=$SBPID"
+            if [ -n "$SBPID" ]; then
+              tools/gx.sh "kill -3 $SBPID" || true
+              sleep 3
+              sudo docker exec redroid /system/bin/sh -c 'for f in /data/anr/*; do echo "==== $f"; cat "$f"; done' > anr2.txt 2>&1 || true
+              tools/gx.sh "logcat -d -v time" 2>/dev/null | grep -a -A400 "DALVIK THREADS" > dalvik2.txt || true
+              wc -l anr2.txt dalvik2.txt || true
+            fi
             tools/gx.sh "dumpsys window 2>/dev/null | grep -a mCurrentFocus" || true
             tools/gx.sh "dumpsys activity activities 2>/dev/null | grep -a mResumedActivity" || true
             tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
@@ -864,8 +841,10 @@ jobs:
             sc_sb3.png
             sc_sb4.png
             sc_sb5.png
-            sb_stacks1.json
-            sb_stacks2.json
+            anr1.txt
+            anr2.txt
+            dalvik1.txt
+            dalvik2.txt
             logcat_selfbuild.txt
             task_stacks.txt
             tcp_state.txt
