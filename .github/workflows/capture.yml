@@ -170,7 +170,7 @@ jobs:
         run: |
           if [ "${{ inputs.apk_source }}" = "selfbuild" ]; then
             echo "fetching self-built apk (release selfbuild-v1)"
-            curl -sL -o app.apk "https://github.com/silverou/arm-android-lab/releases/download/selfbuild-v1/selfbuild-signed-v6.apk"
+            curl -sL -o app.apk "https://github.com/silverou/arm-android-lab/releases/download/selfbuild-v1/selfbuild-signed-v7.apk"
             ls -la app.apk
           elif [ "${{ inputs.apk_source }}" = "checkpatch" ]; then
             echo "building checkpatched apk (MANIFEST+.SF + SecurityJni bypass)"
@@ -331,7 +331,11 @@ jobs:
             sleep 10
             tools/gx.sh "screencap -p /data/local/tmp/sb2.png" || true
             sudo docker cp redroid:/data/local/tmp/sb2.png sc_sb2.png || true
-            sleep 22
+            echo "--- tap skip (guest entry) ---"
+            tools/gx.sh "input tap 1188 76" || true
+            sleep 3
+            tools/gx.sh "input tap 1188 76" || true
+            sleep 19
             tools/gx.sh "screencap -p /data/local/tmp/sb3.png" || true
             sudo docker cp redroid:/data/local/tmp/sb3.png sc_sb3.png || true
             echo "--- ART thread dump via SIGQUIT (#1) ---"
