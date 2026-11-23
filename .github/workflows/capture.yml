@@ -30,6 +30,10 @@ on:
         description: "write a plain-Lua main.ihi into files/asset/src/launcher and relaunch (entry-swap feasibility)"
         type: boolean
         default: false
+      classdump:
+        description: "force-load every dumped class and re-dump dex (original apk only)"
+        type: boolean
+        default: false
 
 jobs:
   capture:
@@ -497,6 +501,27 @@ jobs:
         if: ${{ inputs.apk_source != 'selfbuild' }}
         run: |
           set -x
+          if [ "${{ inputs.classdump }}" = "true" ]; then
+            echo "--- classdump: force-load all classes then dump dex ---"
+            tools/gx.sh "am force-stop com.ihuman.pinyin" || true
+            npm init -y >/dev/null 2>&1 || true
+            npm i --no-audit --no-fund --no-save frida-compile frida-java-bridge >/dev/null 2>&1 || true
+            npx frida-compile tools/classload_dump.js -o classload.js || exit 1
+            ls -la classload.js
+            sudo docker cp tools/classlist.txt redroid:/data/local/tmp/classlist.txt
+            sudo docker cp classload.js redroid:/data/local/tmp/classload.js
+            FRIDA_DEVICE="$FRIDA_DEVICE" timeout 360 python3 tools/run_classload.py 300 classload.js > hook_classload.txt 2>&1 || true
+            tail -40 hook_classload.txt || true
+            rm -rf dexdump_out && mkdir -p dexdump_out
+            for f in $(sudo docker exec redroid /system/bin/sh -c 'ls /data/user/0/com.ihuman.pinyin/files/dexdump_*.bin 2>/dev/null' || true); do
+              b=$(basename "$f")
+              sudo docker exec redroid /system/bin/cat "$f" > "dexdump_out/$b" 2>/dev/null || true
+            done
+            ls -la dexdump_out | head -20 || true
+            tools/gx.sh "logcat -d -v time" > logcat_classdump.txt 2>/dev/null || true
+            tools/gx.sh "am force-stop com.ihuman.pinyin" || true
+            exit 0
+          fi
           tools/gx.sh "am force-stop com.ihuman.pinyin" || true
           echo "--- wake/unlock/stayon (v51) ---"
           tools/gx.sh "input keyevent 224" || true
@@ -828,6 +853,8 @@ jobs:
             xxtea_key.txt
             sodump_out
             dexdump_out
+            hook_classload.txt
+            logcat_classdump.txt
             logcat_plain.txt
             logcat_frida.txt
             logcat_att1.txt
