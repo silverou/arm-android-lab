@@ -174,7 +174,7 @@ jobs:
         run: |
           if [ "${{ inputs.apk_source }}" = "selfbuild" ]; then
             echo "fetching self-built apk (release selfbuild-v1)"
-            curl -sL -o app.apk "https://github.com/silverou/arm-android-lab/releases/download/selfbuild-v1/selfbuild-signed-v8.apk"
+            curl -sL -o app.apk "https://github.com/silverou/arm-android-lab/releases/download/selfbuild-v1/selfbuild-signed-v9.apk"
             ls -la app.apk
           elif [ "${{ inputs.apk_source }}" = "checkpatch" ]; then
             echo "building checkpatched apk (MANIFEST+.SF + SecurityJni bypass)"
