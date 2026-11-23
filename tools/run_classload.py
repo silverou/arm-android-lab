@@ -57,26 +57,31 @@ def spawn_app(dev):
 
 def main():
     dur = int(sys.argv[1]) if len(sys.argv) > 1 else 240
-    bundle = sys.argv[2]
+    bundles = sys.argv[2:]
     addr = os.environ.get("FRIDA_DEVICE", "127.0.0.1:27042")
-    size = os.path.getsize(bundle)
-    if size > 100000:
-        # too big for one create_script message; push already done by CI,
-        # evaluate through the guest-side loader
-        guest = "/data/local/tmp/" + os.path.basename(bundle)
-        loader = open("tools/loadfile.js", encoding="utf-8").read()
-        src = loader.replace("__PATH__", guest)
-        print("USING_GUEST_LOADER", guest, flush=True)
-    else:
-        src = open(bundle, encoding="utf-8").read()
+
+    scripts = []
+    for b in bundles:
+        if os.path.getsize(b) > 100000:
+            # too big for one create_script message; CI pushed it to the
+            # guest filesystem already, evaluate through the guest loader
+            guest = "/data/local/tmp/" + os.path.basename(b)
+            loader = open("tools/loadfile.js", encoding="utf-8").read()
+            scripts.append((b, loader.replace("__PATH__", guest), "guest"))
+        else:
+            scripts.append((b, open(b, encoding="utf-8").read(), "inline"))
+    print("SCRIPTS", [(s[0], s[2]) for s in scripts], flush=True)
 
     dev = connect(addr)
     deadline = time.time() + dur
     for attempt in range(3):
         pid = spawn_app(dev)
         sess = dev.attach(pid)
+        loaded = []
         try:
-            script = sess.create_script(src)
+            for name, src, mode in scripts:
+                script = sess.create_script(src)
+                loaded.append((name, script))
         except Exception as e:
             print("CREATE_SCRIPT_ERR", attempt, str(e)[:300], flush=True)
             try:
@@ -95,8 +100,10 @@ def main():
             print("DETACHED", reason, flush=True)
 
         sess.on("detached", on_detached)
-        script.on("message", on_msg)
-        script.load()
+        for name, script in loaded:
+            script.on("message", on_msg)
+            script.load()
+            print("LOADED", name, flush=True)
         dev.resume(pid)
         print("RESUMED", pid, "attempt", attempt, flush=True)
         while time.time() < deadline:
