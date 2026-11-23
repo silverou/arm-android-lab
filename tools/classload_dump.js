@@ -12,26 +12,34 @@ const DIR = "/data/user/0/com.ihuman.pinyin/files/";
 
 const fopen = new NativeFunction(
   Module.getGlobalExportByName("fopen"), "pointer", ["pointer", "pointer"]);
-const fread = new NativeFunction(
-  Module.getGlobalExportByName("fread"), "size_t", ["pointer", "size_t", "size_t", "pointer"]);
-const fclose = new NativeFunction(
-  Module.getGlobalExportByName("fclose"), "int", ["pointer"]);
 const fwrite = new NativeFunction(
   Module.getGlobalExportByName("fwrite"), "size_t", ["pointer", "size_t", "size_t", "pointer"]);
+const fclose = new NativeFunction(
+  Module.getGlobalExportByName("fclose"), "int", ["pointer"]);
+// read via syscalls exactly like the proven loadfile.js loader
+const openF = new NativeFunction(
+  Module.getGlobalExportByName("open"), "int", ["pointer", "int", "int"]);
+const readF = new NativeFunction(
+  Module.getGlobalExportByName("read"), "long", ["int", "pointer", "long"]);
+const closeF = new NativeFunction(
+  Module.getGlobalExportByName("close"), "int", ["int"]);
 
 function readNative(path) {
-  const fp = fopen(Memory.allocUtf8String(path), Memory.allocUtf8String("rb"));
-  if (fp.isNull()) throw new Error("fopen failed: " + path);
+  const p = Memory.allocUtf8String(path);
+  const fd = openF(p, 0, 0);
+  if (fd < 0) throw new Error("open failed: " + path + " code=" + fd);
   const parts = [];
   const buf = Memory.alloc(65536);
   let total = 0;
   for (;;) {
-    const n = fread(buf, 1, 65536, fp);
-    if (n === 0) break;
+    const n = readF(fd, buf, 65536);
+    if (n <= 0) break;
+    if (n > 65536) throw new Error("bogus read size " + n);
     total += n;
+    if (total > 8 * 1024 * 1024) throw new Error("classlist too large");
     parts.push(buf.readByteArray(n));
   }
-  fclose(fp);
+  closeF(fd);
   const all = new Uint8Array(total);
   let off = 0;
   for (const p of parts) {
