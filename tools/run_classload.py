@@ -59,35 +59,57 @@ def main():
     dur = int(sys.argv[1]) if len(sys.argv) > 1 else 240
     bundle = sys.argv[2]
     addr = os.environ.get("FRIDA_DEVICE", "127.0.0.1:27042")
+    size = os.path.getsize(bundle)
+    if size > 100000:
+        # too big for one create_script message; push already done by CI,
+        # evaluate through the guest-side loader
+        guest = "/data/local/tmp/" + os.path.basename(bundle)
+        loader = open("tools/loadfile.js", encoding="utf-8").read()
+        src = loader.replace("__PATH__", guest)
+        print("USING_GUEST_LOADER", guest, flush=True)
+    else:
+        src = open(bundle, encoding="utf-8").read()
+
     dev = connect(addr)
-    pid = spawn_app(dev)
-    sess = dev.attach(pid)
-
-    def on_msg(m, data):
-        if m.get("type") == "send":
-            print("MSG", json.dumps(m.get("payload"), ensure_ascii=False), flush=True)
-        else:
-            print("ERR", json.dumps(m)[:2000], flush=True)
-
-    def on_detached(reason, crash=None):
-        print("DETACHED", reason, flush=True)
-
-    sess.on("detached", on_detached)
-    src = open(bundle, encoding="utf-8").read()
-    script = sess.create_script(src)
-    script.on("message", on_msg)
-    script.load()
-    dev.resume(pid)
-    print("RESUMED", pid, flush=True)
     deadline = time.time() + dur
-    while time.time() < deadline:
-        time.sleep(2)
-    print("DONE", flush=True)
-    try:
-        sess.detach()
-    except Exception:
-        pass
+    for attempt in range(3):
+        pid = spawn_app(dev)
+        sess = dev.attach(pid)
+        try:
+            script = sess.create_script(src)
+        except Exception as e:
+            print("CREATE_SCRIPT_ERR", attempt, str(e)[:300], flush=True)
+            try:
+                sess.detach()
+            except Exception:
+                pass
+            continue
+
+        def on_msg(m, data):
+            if m.get("type") == "send":
+                print("MSG", json.dumps(m.get("payload"), ensure_ascii=False), flush=True)
+            else:
+                print("ERR", json.dumps(m)[:2000], flush=True)
+
+        def on_detached(reason, crash=None):
+            print("DETACHED", reason, flush=True)
+
+        sess.on("detached", on_detached)
+        script.on("message", on_msg)
+        script.load()
+        dev.resume(pid)
+        print("RESUMED", pid, "attempt", attempt, flush=True)
+        while time.time() < deadline:
+            time.sleep(2)
+        try:
+            sess.detach()
+        except Exception:
+            pass
+        print("DONE", flush=True)
+        return 0
+    print("GAVE_UP", flush=True)
+    return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
