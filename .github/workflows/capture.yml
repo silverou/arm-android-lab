@@ -34,6 +34,13 @@ on:
         description: "force-load every dumped class and re-dump dex (original apk only)"
         type: boolean
         default: false
+      gpu_mode:
+        description: "redroid gpu mode (guest = software/vulkan-pastel, host = host GL)"
+        type: choice
+        options:
+          - guest
+          - host
+        default: guest
 
 jobs:
   capture:
@@ -94,7 +101,7 @@ jobs:
             -p 5556:5555 \
             -p 127.0.0.1:27042:27042 \
             redroid/redroid:12.0.0-latest \
-            androidboot.redroid_gpu_mode=guest
+            androidboot.redroid_gpu_mode=${{ inputs.gpu_mode }}
           IP=$(sudo docker inspect -f '{{.NetworkSettings.IPAddress}}' redroid)
           echo "bridge ip $IP"
           adb kill-server || true
