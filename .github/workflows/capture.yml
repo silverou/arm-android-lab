@@ -507,7 +507,7 @@ jobs:
             npm init -y >/dev/null 2>&1 || true
             npm i --no-audit --no-fund --no-save frida-compile frida-java-bridge >/dev/null 2>&1 || true
             npx frida-compile tools/classload_dump.js -o classload.js || exit 1
-            python3 -c "s=open('classload.js',encoding='utf-8').read(); i=s.find('var __defProp'); open('classload.js','w',encoding='utf-8').write(s[i:] if i>=0 else s)"
+            python3 tools/strip_bundle.py classload.js
             ls -la classload.js
             sudo docker cp tools/classlist.txt redroid:/data/local/tmp/classlist.txt
             sudo docker cp classload.js redroid:/data/local/tmp/classload.js
