@@ -174,7 +174,7 @@ jobs:
         run: |
           if [ "${{ inputs.apk_source }}" = "selfbuild" ]; then
             echo "fetching self-built apk (release selfbuild-v1)"
-            curl -sL -o app.apk "https://github.com/silverou/arm-android-lab/releases/download/selfbuild-v1/selfbuild-signed-v7.apk"
+            curl -sL -o app.apk "https://github.com/silverou/arm-android-lab/releases/download/selfbuild-v1/selfbuild-signed-v8.apk"
             ls -la app.apk
           elif [ "${{ inputs.apk_source }}" = "checkpatch" ]; then
             echo "building checkpatched apk (MANIFEST+.SF + SecurityJni bypass)"
@@ -328,6 +328,11 @@ jobs:
             sleep 4
             tools/gx.sh "screencap -p /data/local/tmp/sb0.png" || true
             sudo docker cp redroid:/data/local/tmp/sb0.png sc_sb0.png || true
+            echo "--- tap privacy dialog (accept) ---"
+            tools/gx.sh "input tap 592 576" || true
+            sleep 3
+            tools/gx.sh "input tap 592 576" || true
+            sleep 1
             sleep 4
             tools/gx.sh "screencap -p /data/local/tmp/sb1.png" || true
             sudo docker cp redroid:/data/local/tmp/sb1.png sc_sb1.png || true
