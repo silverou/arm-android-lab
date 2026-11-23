@@ -61,15 +61,19 @@ def main():
     addr = os.environ.get("FRIDA_DEVICE", "127.0.0.1:27042")
 
     scripts = []
-    for b in bundles:
-        if os.path.getsize(b) > 100000:
+    for spec in bundles:
+        # "local.js" (auto guest path) or "local.js=/guest/path.js"
+        if "=" in spec:
+            local, guest = spec.split("=", 1)
+        else:
+            local, guest = spec, "/data/local/tmp/" + os.path.basename(spec)
+        if os.path.getsize(local) > 100000:
             # too big for one create_script message; CI pushed it to the
             # guest filesystem already, evaluate through the guest loader
-            guest = "/data/local/tmp/" + os.path.basename(b)
             loader = open("tools/loadfile.js", encoding="utf-8").read()
-            scripts.append((b, loader.replace("__PATH__", guest), "guest"))
+            scripts.append((local, loader.replace("__PATH__", guest), "guest:" + guest))
         else:
-            scripts.append((b, open(b, encoding="utf-8").read(), "inline"))
+            scripts.append((local, open(local, encoding="utf-8").read(), "inline"))
     print("SCRIPTS", [(s[0], s[2]) for s in scripts], flush=True)
 
     dev = connect(addr)
