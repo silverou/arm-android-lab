@@ -511,7 +511,7 @@ jobs:
             ls -la classload.js
             sudo docker cp tools/classlist.txt redroid:/data/local/tmp/classlist.txt
             sudo docker cp classload.js redroid:/data/local/tmp/classload.js
-            FRIDA_DEVICE="$FRIDA_DEVICE" timeout 360 python3 tools/run_classload.py 300 classload.js > hook_classload.txt 2>&1 || true
+            FRIDA_DEVICE="$FRIDA_DEVICE" timeout 360 python3 tools/run_classload.py 300 tools/hide.js classload.js > hook_classload.txt 2>&1 || true
             tail -40 hook_classload.txt || true
             rm -rf dexdump_out && mkdir -p dexdump_out
             for f in $(sudo docker exec redroid /system/bin/sh -c 'ls /data/user/0/com.ihuman.pinyin/files/dexdump_*.bin 2>/dev/null' || true); do
