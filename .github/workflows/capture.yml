@@ -347,16 +347,6 @@ jobs:
             sleep 19
             tools/gx.sh "screencap -p /data/local/tmp/sb3.png" || true
             sudo docker cp redroid:/data/local/tmp/sb3.png sc_sb3.png || true
-            echo "--- ART thread dump via SIGQUIT (#1) ---"
-            SBPID=$(tools/gx.sh "pidof com.ihuman.pinyin" 2>/dev/null | tr -d '[:space:]\r')
-            echo "SBPID=$SBPID"
-            if [ -n "$SBPID" ]; then
-              tools/gx.sh "kill -3 $SBPID" || true
-              sleep 3
-              sudo docker exec redroid /system/bin/sh -c 'ls -la /data/anr/ 2>/dev/null; for f in /data/anr/*; do echo "==== $f"; cat "$f"; done' > anr1.txt 2>&1 || true
-              tools/gx.sh "logcat -d -v time" 2>/dev/null | grep -a -A400 "DALVIK THREADS" > dalvik1.txt || true
-              wc -l anr1.txt dalvik1.txt || true
-            fi
             echo "--- tap skip to guest (after sdk init) ---"
             tools/gx.sh "input tap 1188 76" || true
             sleep 4
@@ -369,16 +359,6 @@ jobs:
             sleep 30
             tools/gx.sh "screencap -p /data/local/tmp/sb5.png" || true
             sudo docker cp redroid:/data/local/tmp/sb5.png sc_sb5.png || true
-            echo "--- ART thread dump via SIGQUIT (#2) ---"
-            SBPID=$(tools/gx.sh "pidof com.ihuman.pinyin" 2>/dev/null | tr -d '[:space:]\r')
-            echo "SBPID=$SBPID"
-            if [ -n "$SBPID" ]; then
-              tools/gx.sh "kill -3 $SBPID" || true
-              sleep 3
-              sudo docker exec redroid /system/bin/sh -c 'for f in /data/anr/*; do echo "==== $f"; cat "$f"; done' > anr2.txt 2>&1 || true
-              tools/gx.sh "logcat -d -v time" 2>/dev/null | grep -a -A400 "DALVIK THREADS" > dalvik2.txt || true
-              wc -l anr2.txt dalvik2.txt || true
-            fi
             tools/gx.sh "dumpsys window 2>/dev/null | grep -a mCurrentFocus" || true
             tools/gx.sh "dumpsys activity activities 2>/dev/null | grep -a mResumedActivity" || true
             tools/gx.sh "pidof com.ihuman.pinyin && echo ALIVE || echo DEAD" || true
