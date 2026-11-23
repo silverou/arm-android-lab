@@ -126,6 +126,12 @@ function main() {
   let waited = 0;
   const timer = setInterval(() => {
     waited++;
+    // let the app finish its own boot (shell init + Application + activity)
+    // before we force-load classes; early loads race the packer init
+    if (waited <= 15) {
+      if (waited === 15) send({ ev: "boot_wait_done" });
+      return;
+    }
     const loader = findLoader();
     if (!loader) {
       if (waited > 120) {
