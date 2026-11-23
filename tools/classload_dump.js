@@ -2,29 +2,58 @@
 // mappings from memory. The shell restores method bodies per class at
 // class-load time; classes never loaded by the original session remain
 // stubbed in our dumps.
+//
+// File IO uses native fopen/fread/fwrite (proven loadfile.js pattern);
+// the JS File API is not reliable across frida versions.
 import Java from "frida-java-bridge";
 
 const LIST = "/data/local/tmp/classlist.txt";
 const DIR = "/data/user/0/com.ihuman.pinyin/files/";
 
-function readText(path) {
-  const f = new File(path, "r");
-  const data = f.readAll();
-  f.close();
-  if (typeof data === "string") return data;
-  const u = new Uint8Array(data);
-  const CH = 0x4000;
+const fopen = new NativeFunction(
+  Module.getGlobalExportByName("fopen"), "pointer", ["pointer", "pointer"]);
+const fread = new NativeFunction(
+  Module.getGlobalExportByName("fread"), "size_t", ["pointer", "size_t", "size_t", "pointer"]);
+const fclose = new NativeFunction(
+  Module.getGlobalExportByName("fclose"), "int", ["pointer"]);
+const fwrite = new NativeFunction(
+  Module.getGlobalExportByName("fwrite"), "size_t", ["pointer", "size_t", "size_t", "pointer"]);
+
+function readNative(path) {
+  const fp = fopen(Memory.allocUtf8String(path), Memory.allocUtf8String("rb"));
+  if (fp.isNull()) throw new Error("fopen failed: " + path);
+  const parts = [];
+  const buf = Memory.alloc(65536);
+  let total = 0;
+  for (;;) {
+    const n = fread(buf, 1, 65536, fp);
+    if (n === 0) break;
+    total += n;
+    parts.push(buf.readByteArray(n));
+  }
+  fclose(fp);
+  const all = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) {
+    const u = new Uint8Array(p);
+    all.set(u, off);
+    off += u.length;
+  }
   let s = "";
-  for (let i = 0; i < u.length; i += CH) {
-    s += String.fromCharCode.apply(null, u.subarray(i, Math.min(i + CH, u.length)));
+  for (let i = 0; i < all.length; i += 8192) {
+    s += String.fromCharCode.apply(null, all.subarray(i, Math.min(i + 8192, all.length)));
   }
   return s;
 }
 
-function writeBytes(path, bytes) {
-  const f = new File(path, "wb");
-  f.write(bytes);
-  f.close();
+function writeNative(path, bytes) {
+  const fp = fopen(Memory.allocUtf8String(path), Memory.allocUtf8String("wb"));
+  if (fp.isNull()) return false;
+  const buf = Memory.alloc(bytes.byteLength || bytes.length);
+  buf.writeByteArray(bytes);
+  fwrite(buf, 1, bytes.byteLength || bytes.length, fp);
+  fclose(fp);
+  return true;
 }
 
 function findLoader() {
@@ -64,10 +93,10 @@ function dumpDex(tag) {
     n++;
     try {
       const size = Math.min(r.size, 32 * 1024 * 1024);
-      const bytes = r.base.readByteArray(size);
+      const bytes = new Uint8Array(r.base.readByteArray(size));
       const name = "dexdump_" + tag + "_" + n + "_" + r.base.toString().replace("0x", "") + ".bin";
-      writeBytes(DIR + name, bytes);
-      send({ ev: "dexdump", file: name, base: r.base.toString(), size: size });
+      const ok = writeNative(DIR + name, bytes);
+      send({ ev: "dexdump", file: name, base: r.base.toString(), size: size, ok: ok });
     } catch (e) {
       send({ ev: "dexdump_err", base: r.base.toString(), e: String(e) });
     }
@@ -79,7 +108,7 @@ function main() {
   const re = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/;
   let names = [];
   try {
-    names = readText(LIST).split("\n").map(s => s.trim()).filter(s => s && re.test(s));
+    names = readNative(LIST).split("\n").map(s => s.trim()).filter(s => s && re.test(s));
   } catch (e) {
     send({ ev: "list_err", e: String(e) });
     return;
