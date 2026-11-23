@@ -357,7 +357,13 @@ jobs:
               tools/gx.sh "logcat -d -v time" 2>/dev/null | grep -a -A400 "DALVIK THREADS" > dalvik1.txt || true
               wc -l anr1.txt dalvik1.txt || true
             fi
-            sleep 30
+            echo "--- tap skip to guest (after sdk init) ---"
+            tools/gx.sh "input tap 1188 76" || true
+            sleep 4
+            tools/gx.sh "input tap 1188 76" || true
+            sleep 4
+            tools/gx.sh "input tap 1188 76" || true
+            sleep 22
             tools/gx.sh "screencap -p /data/local/tmp/sb4.png" || true
             sudo docker cp redroid:/data/local/tmp/sb4.png sc_sb4.png || true
             sleep 30
